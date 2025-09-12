@@ -22,3 +22,6 @@ This project aims to:
 - 📈 Deliver **actionable insights** to optimize campaign effectiveness and resource use
 
 By leveraging the data and predictive models, this project ultimately supports AI-Vive-Banking in **streamlining operations**, **boosting customer engagement**, and **maximizing financial returns**.
+
+1. Update file path in config + target + indentifier column, if any
+2. Run the `basic_exploration.ipynb` notebook

@@ -1,5 +1,5 @@
 # ===========================================================================================================================================
-# 📦 DATA LOADER CLASS
+# 📦 DATA CLEANER CLASS
 # ===========================================================================================================================================
 
 # Standard library imports
@@ -9,6 +9,7 @@ from typing import Any, Dict, List, Optional, Union
 # Related third-party imports
 import pandas as pd
 from IPython.display import display 
+from rich import print as rprint
 
 class DataCleaner:
     """
@@ -57,6 +58,7 @@ class DataCleaner:
         """
         df_cleaned = df.copy()
         df_cleaned = self.convert_column_names_to_snake_case(df_cleaned)
+        df_cleaned = self.drop_irrelevant_features(df=df_cleaned, columns_to_drop=["url", 'n_non_stop_words', 'n_non_stop_unique_tokens', 'num_hrefs', 'num_self_hrefs', 'num_imgs', 'num_videos', 'n_comments', 'average_token_length', 'self_reference_min_shares', 'self_reference_max_shares', 'self_reference_avg_shares', 'num_keywords', 'kw_min_min', 'kw_max_min', 'kw_avg_min', 'kw_min_max', 'kw_max_max', 'kw_avg_max', 'kw_min_avg', 'kw_max_avg', 'kw_avg_avg'])
         # df_cleaned.drop_duplicates(inplace=True)
         # df_cleaned = self.clean_flat_type(df_cleaned)
         # df_cleaned = self.clean_lease_commence_date(df_cleaned)
@@ -266,8 +268,9 @@ class DataCleaner:
         existing_cols_to_drop = [col for col in columns_to_drop if col in df_copy.columns]
 
         if existing_cols_to_drop:
-            print(f"   └── Dropping irrelevant columns: {existing_cols_to_drop}")
             df_copy.drop(columns=existing_cols_to_drop, inplace=True)
+            colored_cols = ", ".join(f"[red]{col}[/red]" for col in existing_cols_to_drop)
+            rprint(f"   └── Dropping irrelevant columns: [{colored_cols}]")
         else:
             print(f"   └── None of the specified columns exist in DataFrame. Nothing dropped.")
 
@@ -324,7 +327,7 @@ class DataCleaner:
     
     ########################################################################################################################################
     ########################################################################################################################################
-    # 🧼 DROP DUPLICATE IDs
+    # 🧼 DROP DUPLICATE IDS
     @staticmethod
     def drop_duplicate_ids(df: pd.DataFrame, id_column: str, show: bool = False) -> pd.DataFrame:
         """

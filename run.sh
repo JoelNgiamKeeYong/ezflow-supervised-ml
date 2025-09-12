@@ -2,7 +2,6 @@
 
 # Simple script to run main.py
 echo "🚀 Starting the pipeline..."
-echo
 python main.py
 
 # Check if execution succeeded
