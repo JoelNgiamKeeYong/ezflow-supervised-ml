@@ -4,6 +4,7 @@
 
 # Standard library imports
 import re
+import time
 from typing import Any, Dict, List, Optional, Union
 
 # Related third-party imports
@@ -56,10 +57,12 @@ class DataCleaner:
         pd.DataFrame
             Fully cleaned dataset
         """
+        start_time = time.time()  
+
         df_cleaned = df.copy()
-        df_cleaned = self.convert_column_names_to_snake_case(df_cleaned)
+        df_cleaned = self.convert_column_names_to_snake_case(df=df_cleaned)
         df_cleaned = self.drop_irrelevant_features(df=df_cleaned, columns_to_drop=["url", 'n_non_stop_words', 'n_non_stop_unique_tokens', 'num_hrefs', 'num_self_hrefs', 'num_imgs', 'num_videos', 'n_comments', 'average_token_length', 'self_reference_min_shares', 'self_reference_max_shares', 'self_reference_avg_shares', 'num_keywords', 'kw_min_min', 'kw_max_min', 'kw_avg_min', 'kw_min_max', 'kw_max_max', 'kw_avg_max', 'kw_min_avg', 'kw_max_avg', 'kw_avg_avg'])
-        # df_cleaned.drop_duplicates(inplace=True)
+        # df_cleaned = self.drop_duplicate_rows(df=df_cleaned)
         # df_cleaned = self.clean_flat_type(df_cleaned)
         # df_cleaned = self.clean_lease_commence_date(df_cleaned)
         # df_cleaned = self.clean_storey_range(df_cleaned)
@@ -67,6 +70,11 @@ class DataCleaner:
         # df_cleaned = self.drop_irrelevant_columns(df_cleaned)
         # df_cleaned = self.extract_year_month(df_cleaned)
         # df_cleaned = self.process_remaining_lease(df_cleaned)
+
+        # Calculate elapsed time
+        elapsed_time = time.time() - start_time
+        print(f"   └── Cleaning completed in {elapsed_time:.2f} seconds")
+    
         return df_cleaned
     
     ########################################################################################################################################
@@ -269,8 +277,8 @@ class DataCleaner:
 
         if existing_cols_to_drop:
             df_copy.drop(columns=existing_cols_to_drop, inplace=True)
-            colored_cols = ", ".join(f"[red]{col}[/red]" for col in existing_cols_to_drop)
-            rprint(f"   └── Dropping irrelevant columns: [{colored_cols}]")
+            cols = ", ".join(existing_cols_to_drop)
+            print(f"   └── Dropping irrelevant columns: {cols}")
         else:
             print(f"   └── None of the specified columns exist in DataFrame. Nothing dropped.")
 
@@ -314,9 +322,9 @@ class DataCleaner:
             print("   └── Dropping duplicates based on all columns...")
 
         if duplicates.empty:
-            print("       └── ⚠️ No duplicates found. Nothing dropped.")
+            print("       └── ⚠️  No duplicates found. Nothing dropped.")
         else:
-            print(f"       └── ⚠️ Found {len(duplicates)} duplicate rows.")
+            print(f"       └── ⚠️  Found {len(duplicates)} duplicate rows.")
             if show:
                 display(duplicates)
 

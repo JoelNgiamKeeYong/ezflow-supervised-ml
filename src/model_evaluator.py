@@ -6,6 +6,7 @@ import os
 import time
 import numpy as np
 import pandas as pd
+from typing import Any, Dict
 import matplotlib.pyplot as plt
 import seaborn as sns
 
@@ -29,57 +30,25 @@ class ModelEvaluator:
     """
     A unified model evaluator for classification and regression tasks.
 
-    Parameters
-    ----------
-    task_type : str
-        "classification" or "regression".
-    scoring_metric : str, optional
-        Scoring metric used for plots/importance. Defaults to "f1" for classification, 
-        "r2" for regression.
-    generate_plots : bool, default=True
-        Whether to generate diagnostic plots.
-    minimum_precision : float, optional
-        Minimum precision constraint for classification threshold optimization.
-    minimum_recall : float, optional
-        Minimum recall constraint for classification threshold optimization.
-    random_state : int, default=42
-        Random seed for reproducibility.
-    n_jobs : int, default=-1
-        Number of parallel jobs.
+    Attributes:
+    -----------
+    config : Dict[str, Any], optional
+            Configuration dictionary containing parameters for cleaning rules, by default None
     """
 
     ########################################################################################################################################
     ########################################################################################################################################
     # 🏗️ CLASS CONSTRUCTOR
-    def __init__(
-        self,
-        task_type: str,
-        scoring_metric: str = None,
-        generate_plots: bool = True,
-        minimum_precision: float = None,
-        minimum_recall: float = None,
-        random_state: int = 42,
-        n_jobs: int = -1,
-        output_dir: str = "output"
-    ):
-        self.task_type = task_type
-        self.generate_plots = generate_plots
-        self.minimum_precision = minimum_precision
-        self.minimum_recall = minimum_recall
-        self.random_state = random_state
-        self.n_jobs = n_jobs
-        self.output_dir = output_dir
+    def __init__(self, config: Dict[str, Any] = None):
+        """
+        Initializes the ModelTrainer class.
 
-        # Default scoring
-        if scoring_metric is None:
-            if self.task_type == "classification":
-                self.scoring_metric = "f1"
-            elif self.task_type == "regression":
-                self.scoring_metric = "r2"
-            else:
-                raise ValueError("task_type must be 'classification' or 'regression'")
-        else:
-            self.scoring_metric = scoring_metric
+        Parameters
+        ----------
+        config : Dict[str, Any], optional
+            Configuration dictionary containing parameters for model training rules, by default None
+        """
+        self.config = config or {}
 
     ########################################################################################################################################
     ########################################################################################################################################
@@ -99,20 +68,19 @@ class ModelEvaluator:
         list
             Updated trained_models with appended metrics + evaluation time.
         """
-        print(f"\n📊 Evaluating best {self.task_type} models...")
 
         # Ensure output directory exists
-        os.makedirs(self.output_dir, exist_ok=True)
+        os.makedirs(self.config["output_dir"], exist_ok=True)
 
         results = []
-        extra_data = {"roc": [], "pr": []} if self.task_type == "classification" else None
+        extra_data = {"roc": [], "pr": []} if self.config["task_type"] == "classification" else None
         feature_names = X_train.columns.tolist()
 
         for i, (model_name, best_model, training_time, model_size_kb) in enumerate(trained_models):
-            print(f"\n   📋 Evaluating {model_name} model...")
+            print(f"\n   📋 Evaluating \033[1;38;5;214m{model_name}\033[0m model...")
             start_time = time.time()
 
-            if self.task_type == "regression":
+            if self.config["task_type"] == "regression":
                 metrics = self._compute_regression_metrics(model_name, best_model, X_train, y_train, X_test, y_test)
             else:
                 metrics, roc_dict, pr_dict = self._compute_classification_metrics(
@@ -127,13 +95,13 @@ class ModelEvaluator:
             self._generate_feature_importance(model_name, best_model, X_train, y_train, feature_names)
 
             # 📈 Plots
-            if self.generate_plots:
-                if self.task_type == "regression":
+            if self.config["generate_plots"]:
+                if self.config["task_type"] == "regression":
                     self._plot_error_diagnostics(model_name, best_model, X_test, y_test)
                 else:
                     self._plot_confusion_matrix(model_name, best_model, X_test, y_test)
                     self._plot_calibration_curves(model_name, best_model, X_test, y_test)
-                    self._generate_learning_curve(self.task_type, model_name, best_model, X_train, y_train)
+                    self._generate_learning_curve(self.config["task_type"], model_name, best_model, X_train, y_train)
 
             # ⏱️ Evaluation time
             evaluation_time = time.time() - start_time
@@ -142,7 +110,7 @@ class ModelEvaluator:
             trained_models[i] = (model_name, best_model, training_time, model_size_kb, metrics, evaluation_time)
 
         # Save combined ROC/PR plots
-        if self.task_type == "classification" and self.generate_plots:
+        if self.config["task_type"] == "classification" and self.config["generate_plots"]:
             self._plot_combined_roc(extra_data["roc"])
             self._plot_combined_pr(extra_data["pr"])
 
@@ -197,8 +165,8 @@ class ModelEvaluator:
             axs[1,1].axhline(0,color="red",ls="--")
             axs[1,1].set_title("Prediction Error Plot")
             plt.tight_layout(rect=[0,0.03,1,0.95])
-            os.makedirs(f"{self.output_dir}/error_diagnostics", exist_ok=True)
-            plt.savefig(f"{self.output_dir}/error_diagnostics/error_diagnostics_{model_name.replace(' ','_').lower()}.png", dpi=300)
+            os.makedirs(f"{self.config["output_dir"]}/error_diagnostics", exist_ok=True)
+            plt.savefig(f"{self.config["output_dir"]}/error_diagnostics/error_diagnostics_{model_name.replace(' ','_').lower()}.png", dpi=300)
             plt.close()
         except Exception as e:
             print(f"      └── ⚠️ Failed diagnostics for {model_name}: {e}")
@@ -217,14 +185,14 @@ class ModelEvaluator:
         def find_threshold(y_true, y_probs):
             prec, rec, thresholds = precision_recall_curve(y_true, y_probs)
             prec, rec = prec[:-1], rec[:-1]
-            if self.minimum_precision and not self.minimum_recall:
-                valid = prec >= self.minimum_precision
+            if self.config["minimum_precision"] and not self.config["minimum_recall"]:
+                valid = prec >= self.config["minimum_precision"]
                 if np.any(valid): return thresholds[np.argmax(rec*valid)]
-            if self.minimum_recall and not self.minimum_precision:
-                valid = rec >= self.minimum_recall
+            if self.config["minimum_recall"] and not self.config["minimum_precision"]:
+                valid = rec >= self.config["minimum_recall"]
                 if np.any(valid): return thresholds[np.argmax(prec*valid)]
-            if self.minimum_precision and self.minimum_recall:
-                valid = (prec>=self.minimum_precision)&(rec>=self.minimum_recall)
+            if self.minimum_precision and self.config["minimum_recall"]:
+                valid = (prec>=self.config["minimum_precision"])&(rec>=self.config["minimum_recall"])
                 if np.any(valid):
                     f1 = 2*(prec*rec)/(prec+rec+1e-8)
                     return thresholds[np.argmax(f1*valid)]
@@ -258,7 +226,7 @@ class ModelEvaluator:
             plt.figure(figsize=(6,5))
             sns.heatmap(cm,annot=True,fmt="d",cmap="Blues",xticklabels=["Negative","Positive"],yticklabels=["Negative","Positive"])
             plt.title(f"{model_name} Confusion Matrix")
-            plt.savefig(f"{self.output_dir}/confusion_matrix_{model_name.replace(' ','_').lower()}.png",dpi=300)
+            plt.savefig(f"{self.config["output_dir"]}/confusion_matrix_{model_name.replace(' ','_').lower()}.png",dpi=300)
             plt.close()
         except Exception as e:
             print(f"      └── ⚠️ Failed confusion matrix for {model_name}: {e}")
@@ -270,7 +238,7 @@ class ModelEvaluator:
             plt.plot(prob_pred,prob_true,"s-")
             plt.plot([0,1],[0,1],"k--")
             plt.title(f"{model_name} Calibration Curve")
-            plt.savefig(f"{self.output_dir}/calibration_{model_name.replace(' ','_').lower()}.png",dpi=300)
+            plt.savefig(f"{self.config["output_dir"]}/calibration_{model_name.replace(' ','_').lower()}.png",dpi=300)
             plt.close()
         except Exception as e:
             print(f"      └── ⚠️ Failed calibration curve for {model_name}: {e}")
@@ -281,14 +249,14 @@ class ModelEvaluator:
             plt.plot(d["FPR"],d["TPR"],label=f"{d['Model']} (AUC={d['AUC']:.3f})")
         plt.plot([0,1],[0,1],"k--")
         plt.legend(); plt.title("ROC Curves")
-        plt.savefig(f"{self.output_dir}/combined_roc.png",dpi=300); plt.close()
+        plt.savefig(f"{self.config["output_dir"]}/combined_roc.png",dpi=300); plt.close()
 
     def _plot_combined_pr(self, pr_data):
         plt.figure(figsize=(7,6))
         for d in pr_data:
             plt.plot(d["Recall"],d["Precision"],label=f"{d['Model']} (AUC={d['AUC-PR']:.3f})")
         plt.legend(); plt.title("Precision-Recall Curves")
-        plt.savefig(f"{self.output_dir}/combined_pr.png",dpi=300); plt.close()
+        plt.savefig(f"{self.config["output_dir"]}/combined_pr.png",dpi=300); plt.close()
 
     ########################################################################################################################################
     ########################################################################################################################################
@@ -336,17 +304,17 @@ class ModelEvaluator:
             else:
                 perm_importance = permutation_importance(
                     final_estimator, X_train, y_train,
-                    scoring=self.scoring_metric,
+                    scoring=self.config["scoring_metric"],
                     n_repeats=10,
-                    random_state=self.random_state
+                    random_state=self.config["random_state"]
                 )
                 feature_importances = pd.Series(
                     perm_importance.importances_mean, index=feature_names
                 ).sort_values(ascending=False)
                 
             # Save results
-            os.makedirs(f"{self.output_dir}/feature_importance", exist_ok=True)
-            file_path = f"{self.output_dir}/feature_importance/feature_importances_{model_name.replace(' ', '_').lower()}.txt"
+            os.makedirs(f"{self.config["output_dir"]}/feature_importance", exist_ok=True)
+            file_path = f"{self.config["output_dir"]}/feature_importance/feature_importances_{model_name.replace(' ', '_').lower()}.txt"
 
             with open(file_path, "w", encoding="utf-8") as f:
                 f.write(f"--- 📊 Feature Importance Scores for {model_name} ---\n")
@@ -382,11 +350,11 @@ class ModelEvaluator:
                 unique, counts = np.unique(y_train, return_counts=True)
                 if np.min(counts) < 2:
                     print("      └── ⚠️ Not enough samples for some classes → using KFold instead.")
-                    cv = KFold(n_splits=5, shuffle=True, random_state=self.random_state)
+                    cv = KFold(n_splits=5, shuffle=True, random_state=self.config["random_state"])
                 else:
-                    cv = StratifiedKFold(n_splits=5, shuffle=True, random_state=self.random_state)
+                    cv = StratifiedKFold(n_splits=5, shuffle=True, random_state=self.config["random_state"])
             else:
-                cv = KFold(n_splits=5, shuffle=True, random_state=self.random_state)
+                cv = KFold(n_splits=5, shuffle=True, random_state=self.config["random_state"])
 
             # Training sizes
             train_sizes = np.linspace(0.1, 1.0, 10)
@@ -396,8 +364,8 @@ class ModelEvaluator:
                 model, X_train, y_train,
                 train_sizes=train_sizes,
                 cv=cv,
-                scoring=self.scoring_metric,
-                n_jobs=self.n_jobs
+                scoring=self.config["scoring_metric"],
+                n_jobs=self.config["n_jobs"]
             )
 
             train_mean, train_std = np.mean(train_scores, axis=1), np.std(train_scores, axis=1)
@@ -412,14 +380,14 @@ class ModelEvaluator:
 
             plt.title(f"Learning Curves - {model_name}", fontsize=14, fontweight="bold")
             plt.xlabel("Training Examples", fontsize=12)
-            plt.ylabel(self.scoring_metric.upper(), fontsize=12)
+            plt.ylabel(self.config["scoring_metric"].upper(), fontsize=12)
             plt.grid(True, linestyle="--", alpha=0.7)
             plt.legend(loc="best", fontsize=10)
             plt.tight_layout()
 
             # Save
-            os.makedirs(f"{self.output_dir}/learning_curves", exist_ok=True)
-            file_path = f"{self.output_dir}/learning_curves/learning_curve_{model_name.replace(' ', '_').lower()}.png"
+            os.makedirs(f"{self.config["output_dir"]}/learning_curves", exist_ok=True)
+            file_path = f"{self.config["output_dir"]}/learning_curves/learning_curve_{model_name.replace(' ', '_').lower()}.png"
             plt.savefig(file_path, dpi=300)
             plt.close()
 
@@ -442,7 +410,7 @@ class ModelEvaluator:
             None. Saves metrics to text file.
         """
         try:
-            metrics_file_path = f"{self.output_dir}/evaluation_metrics_summary.txt"
+            metrics_file_path = f"{self.config["output_dir"]}/evaluation_metrics_summary.txt"
             with open(metrics_file_path, "w", encoding="utf-8") as f:
                 f.write("📋 Consolidated Evaluation Metrics:\n")
                 f.write("(Test metrics first, training metrics in [brackets])\n\n")

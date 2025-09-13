@@ -1,5 +1,5 @@
 # config_models.py
-from sklearn.ensemble import RandomForestClassifier
+from sklearn.ensemble import RandomForestRegressor
 from sklearn.linear_model import LogisticRegression
 
 models = {
@@ -24,8 +24,12 @@ models = {
     ########################################################################################################################################
     # 🟢 RANDOM FOREST
     "RandomForest": {
-        "model": RandomForestClassifier(random_state=42),
-        "params_grid": {"model__n_estimators": [50], "model__max_depth": [5]},
+        "model": RandomForestRegressor(),
+        "params_grid": {
+            "model__n_estimators": [50],
+            "model__max_depth": [5],
+            "model__min_samples_split": [2],
+        },
         "params_random": {
             "model__n_estimators": [50, 100, 200, 300],
             "model__max_depth": [3, 5, 10, None],

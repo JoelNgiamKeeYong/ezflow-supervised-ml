@@ -5,73 +5,44 @@
 import os
 import time
 import joblib
+from typing import Any, Dict
 from imblearn.pipeline import Pipeline
 from imblearn.over_sampling import SMOTE
 from imblearn.under_sampling import EditedNearestNeighbours
 from imblearn.combine import SMOTEENN
 
+from sklearn.utils.multiclass import type_of_target
+from sklearn.base import is_classifier, is_regressor
 from sklearn.model_selection import GridSearchCV, RandomizedSearchCV
 from skopt import BayesSearchCV
+from rich import print as rprint
 
 # ===========================================================================================================================================
 # 🤖 MAIN CLASS
 # ===========================================================================================================================================
 class ModelTrainer:
     """
-    A unified model trainer for classification and regression tasks with
-    support for GridSearchCV, RandomizedSearchCV, and Bayesian optimization.
+    A unified model trainer for classification and regression tasks with support for GridSearchCV, RandomizedSearchCV, and Bayesian optimization.
 
-    Parameters
-    ----------
-    task_type : str
-        "classification" or "regression".
-    search_type : str, default="random"
-        One of {"grid", "random", "bayes"}.
-    use_smote_enn : bool, default=True
-        Only applies if task_type="classification".
-    cv_folds : int, default=5
-        Number of cross-validation folds.
-    scoring_metric : str, default="f1" (classification) or "neg_root_mean_squared_error" (regression).
-    n_iter : int, default=50
-        Iterations for randomized/bayes search.
-    n_jobs : int, default=-1
-        Number of parallel jobs.
-    random_state : int, default=42
-        Random seed for reproducibility.
+    Attributes:
+    -----------
+    config : Dict[str, Any], optional
+            Configuration dictionary containing parameters for cleaning rules, by default None
     """
 
     ########################################################################################################################################
     ########################################################################################################################################
     # 🏗️ CLASS CONSTRUCTOR
-    def __init__(
-        self,
-        task_type: str,
-        search_type: str = "grid",
-        use_smote_enn: bool = False,
-        cv_folds: int = 5,
-        scoring_metric: str = None,
-        n_iter: int = 50,
-        n_jobs: int = -1,
-        random_state: int = 42,
-    ):
-        self.task_type = task_type
-        self.search_type = search_type
-        self.use_smote_enn = use_smote_enn
-        self.cv_folds = cv_folds
-        self.n_iter = n_iter
-        self.n_jobs = n_jobs
-        self.random_state = random_state
+    def __init__(self, config: Dict[str, Any] = None):
+        """
+        Initializes the ModelTrainer class.
 
-        # Default scoring depending on task type
-        if scoring_metric is None:
-            if self.task_type == "classification":
-                self.scoring_metric = "f1"
-            elif self.task_type == "regression":
-                self.scoring_metric = "neg_root_mean_squared_error"
-            else:
-                raise ValueError("task_type must be 'classification' or 'regression'")
-        else:
-            self.scoring_metric = scoring_metric
+        Parameters
+        ----------
+        config : Dict[str, Any], optional
+            Configuration dictionary containing parameters for model training rules, by default None
+        """
+        self.config = config or {}
 
     ########################################################################################################################################
     ########################################################################################################################################
@@ -95,32 +66,42 @@ class ModelTrainer:
         -------
         list of [model_name, best_model, training_time, model_size_kb]
         """
-        trained_models = []
         print(f"   └── Initalizing the model training framework...")
-        print(f"   └── Task type: {self.task_type.title()}")
-        print(f"   └── Hyperparameter search strategy: {self.search_type.title()}SearchCV")
-        print(f"   └── Cross-validation folds: {self.cv_folds}")
-        print(f"   └── Scoring metric: {self.scoring_metric}")
-        print(f"   └── Maximum search iterations: {self.n_iter if self.search_type != 'grid' else 'N/A (GridSearch)'}")
-        print(f"   └── Parallel jobs: {self.n_jobs}")
-        print(f"   └── Random seed: {self.random_state}")
+
+        # Detecting task type
+        rprint(f"   └── Task type: [magenta]{self.config["task_type"].title()}[/magenta]")
+        
+        # Validate models and task type
+        self._detect_task_type_and_validate_models(models=models)
+
+        # Setting hyoperparameter search config
+        rprint(f"   └── Hyperparameter search strategy: [magenta]{self.config["search_type"].title()}SearchCV[/magenta]")
+        rprint(f"   └── Cross-validation folds: [magenta]{self.config["cv_folds"]}[/magenta]")
+        rprint(f"   └── Scoring metric: [magenta]{self.config["scoring_metric"]}[/magenta]")
+        rprint(f"   └── Maximum search iterations: [magenta]{self.config["n_iter"] if self.config["search_type"] != 'grid' else 'N/A (GridSearch)'}[/magenta]")
+        print(f"   └── Parallel jobs: {self.config["n_jobs"]}")
+        print(f"   └── Random seed: {self.config["random_state"]}")
         print("   └── Framework for training is set — proceeding to train models...")
 
+        # Store trained models
+        trained_models = []
+
+        # Train each model
         for model_name, model_info in models.items():
             try:
-                print(f"\n   ⛏️  Training {model_name}...")
+                print(f"\n   ⛏️  Training \033[1;38;5;214m{model_name}\033[0m model...")
                 start_time = time.time()
 
                 # Build pipeline
                 steps = []
-                if self.task_type == "classification":
+                if self.config["task_type"] == "classification":
                     steps.append(("sampler", self._choose_sampler()))
                 steps.append(("model", model_info["model"]))
                 pipeline = Pipeline(steps)
                 print(f"      └── Pipeline steps: {[name for name, _ in pipeline.steps]}")
 
                 # Pick hyperparam config
-                param_key = f"params_{self.search_type}"
+                param_key = f"params_{self.config["search_type"]}"
                 if param_key not in model_info:
                     raise KeyError(f"Missing {param_key} in model config for {model_name}")
                 param_config = model_info[param_key]
@@ -134,7 +115,7 @@ class ModelTrainer:
                 # Fit search
                 print(f"      └── Starting hyperparameter search for {model_name}...")
                 print(f"      └── Number of hyperparameter combinations: {n_candidates}")
-                print(f"      └── Fitting {self.cv_folds} folds for each of {n_candidates} candidates, totalling {self.cv_folds * n_candidates} fits")  
+                print(f"      └── Fitting {self.config["cv_folds"]} folds for each of {n_candidates} candidates, totalling {self.config["cv_folds"] * n_candidates} fits")  
                 search.fit(X_train, y_train)
 
                 # Training time
@@ -164,6 +145,38 @@ class ModelTrainer:
     
     ########################################################################################################################################
     ########################################################################################################################################
+    # 🤖 DETECT TASK TYPE AND VALIDATE MODELS
+    def _detect_task_type_and_validate_models(self, models):
+        """
+        Validate that all models are appropriate for the specified task type.
+
+        Args:
+            models (dict): Dict of models to validate.
+            
+        Returns:
+            None.
+
+        Raises:
+            ValueError: If model types don't match the task or task_type is invalid.
+        """
+        print(f"   └── Validating candidate models...")
+
+        # Detect task type from target variable
+        if self.config["task_type"] not in ["classification", "regression"]:
+            raise ValueError(f"❌  task_type must be 'classification' or 'regression', got '{self.config["task_type"]}'")
+
+        # Validate models
+        for name, model_dict in models.items():
+            model = model_dict["model"]
+            if self.config["task_type"] == "classification" and not is_classifier(model):
+                raise ValueError(f"    └── ❌  Model '{name}' is not a classifier but task is classification.")
+            elif self.config["task_type"] == "regression" and not is_regressor(model):
+                raise ValueError(f"    └── ❌  Model '{name}' is not a regressor but task is regression.")
+
+        print(f"   └── Candidate models provided are valid for {self.config["task_type"]} task")
+
+    ########################################################################################################################################
+    ########################################################################################################################################
     # 🤖 CREATE SEARCH CV
     def _create_search_cv(self, model_pipeline, param_config):
         """
@@ -190,50 +203,48 @@ class ModelTrainer:
         """
 
         # Compute number of candidates for logging
-        if self.search_type == "grid":
+        if self.config["search_type"] == "grid":
             # Product of lengths of lists in param_config
             n_candidates = 1
             for values in param_config.values():
                 n_candidates *= len(values) if isinstance(values, (list, tuple)) else 1
-        elif self.search_type == "random":
-            n_candidates = min(self.n_iter, 
-                            1 if not param_config else
-                            self.n_iter)  # Random samples up to n_iter
-        elif self.search_type == "bayes":
-            n_candidates = self.n_iter
+        elif self.config["search_type"] == "random":
+            n_candidates = min(self.config["n_iter"], 1 if not param_config else self.config["n_iter"])  # Random samples up to n_iter
+        elif self.config["search_type"] == "bayes":
+            n_candidates = self.config["n_iter"]
         else:
             raise ValueError("search_type must be one of {'grid', 'random', 'bayes'}")
 
         # Create the appropriate search object
-        if self.search_type == "grid":
+        if self.config["search_type"] == "grid":
             search_cv = GridSearchCV(
                 estimator=model_pipeline,
                 param_grid=param_config,
-                cv=self.cv_folds,
-                scoring=self.scoring_metric,
-                n_jobs=self.n_jobs,
+                cv=self.config["cv_folds"],
+                scoring=self.config["scoring_metric"],
+                n_jobs=self.config["n_jobs"],
                 verbose=0
             )
-        elif self.search_type == "random":
+        elif self.config["search_type"] == "random":
             search_cv = RandomizedSearchCV(
                 estimator=model_pipeline,
                 param_distributions=param_config,
-                n_iter=self.n_iter,
-                cv=self.cv_folds,
-                scoring=self.scoring_metric,
-                n_jobs=self.n_jobs,
-                random_state=self.random_state,
+                n_iter=self.config["n_iter"],
+                cv=self.config["cv_folds"],
+                scoring=self.config["scoring_metric"],
+                n_jobs=self.config["n_jobs"],
+                random_state=self.config["random_state"],
                 verbose=0
             )
         elif self.search_type == "bayes":
             search_cv = BayesSearchCV(
                 estimator=model_pipeline,
                 search_spaces=param_config,
-                n_iter=self.n_iter,
-                cv=self.cv_folds,
-                scoring=self.scoring_metric,
-                n_jobs=self.n_jobs,
-                random_state=self.random_state,
+                n_iter=self.config["n_iter"],
+                cv=self.config["cv_folds"],
+                scoring=self.config["scoring_metric"],
+                n_jobs=self.config["n_jobs"],
+                random_state=self.config["random_state"],
                 verbose=0
             )
 
@@ -288,14 +299,14 @@ class ModelTrainer:
             return SMOTE(
                 sampling_strategy="auto",
                 k_neighbors=5,
-                random_state=self.random_state
+                random_state=self.config["random_state"]
             )
 
         return SMOTEENN(
             smote=SMOTE(
                 sampling_strategy="auto",
                 k_neighbors=5,
-                random_state=self.random_state
+                random_state=self.config["random_state"]
             ),
             enn=EditedNearestNeighbours(
                 sampling_strategy="majority",

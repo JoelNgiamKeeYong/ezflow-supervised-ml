@@ -2,6 +2,8 @@
 # 🔎 DATA EXPLORER CLASS
 # ===========================================================================================================================================
 
+import re
+import difflib
 import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
@@ -9,6 +11,7 @@ import statsmodels.api as sm
 from scipy.stats import zscore
 from IPython.display import display
 from typing import List
+from rich import print as rprint
 
 class DataExplorer:
     """
@@ -201,3 +204,72 @@ class DataExplorer:
         axes[1].set_title("Pie Chart")
         plt.tight_layout()
         plt.show()
+
+    @staticmethod
+    def compare_dataframes(
+        df_before: pd.DataFrame,
+        df_after: pd.DataFrame,
+        before_name: str = "before",
+        after_name: str = "after"
+    ) -> None:
+        """
+        Compare two DataFrames and print summary of changes in rows, columns, and memory usage.
+        """
+        # Rows
+        rows_before = df_before.shape[0]
+        rows_after = df_after.shape[0]
+        rows_dropped = rows_before - rows_after
+
+        # Columns
+        cols_before = df_before.shape[1]
+        cols_after = df_after.shape[1]
+        dropped_columns = set(df_before.columns) - set(df_after.columns)
+        added_columns = set(df_after.columns) - set(df_before.columns)
+
+        def _normalize(col: str) -> str:
+            return re.sub(r'[^a-z0-9]', '', col.lower().strip()) if col else ""
+    
+        renames = []
+        for a in list(added_columns):
+            norm_a = _normalize(a)
+            matches = [b for b in dropped_columns if _normalize(b) == norm_a]
+            if matches:
+                renames.append((matches[0], a))
+                dropped_columns.discard(matches[0]); added_columns.discard(a)
+
+        # Memory usage
+        size_before = df_before.memory_usage(deep=True).sum() / (1024 ** 2)
+        size_after = df_after.memory_usage(deep=True).sum() / (1024 ** 2)
+        size_change = size_after - size_before
+        size_pct = (abs(size_change) / size_before * 100) if size_before > 0 else 0
+
+        # Header
+        rprint(f"\n[bold cyan]🔍 Comparing DataFrames[/bold cyan]: {before_name} → {after_name}")
+
+        # Rows summary
+        rprint(f"   └── [yellow]Rows[/yellow]: {rows_before:,} → {rows_after:,}", end="")
+        if rows_dropped > 0:
+            rprint(f"  |  Dropped: [red]{rows_dropped:,} ({rows_dropped/rows_before:.2%})[/red]")
+        elif rows_dropped < 0:
+            rprint(f"  |  Added: [green]{abs(rows_dropped):,} ({abs(rows_dropped)/rows_before:.2%})[/green]")
+        else:
+            rprint("  |  [cyan]No changes[/cyan]")
+
+        # Columns summary
+        if dropped_columns or added_columns:
+            rprint(f"   └── [yellow]Columns[/yellow]: {cols_before} → {cols_after}")
+            if dropped_columns:
+                rprint(f"       └── Dropped: [red]{', '.join(sorted(dropped_columns))}[/red]")
+            if added_columns:
+                rprint(f"       └── Added: [green]{', '.join(sorted(added_columns))}[/green]")
+        else:
+            rprint(f"   └── [yellow]Columns[/yellow]: {cols_before} → {cols_after}  |  [cyan]No changes[/cyan]")
+
+        # Memory summary
+        rprint(f"   └── [yellow]Memory[/yellow]: {size_before:.2f} MB → {size_after:.2f} MB", end="")
+        if size_change > 0:
+            rprint(f"  |  Increase: [red]{size_change:.2f} MB ({size_pct:.2f}%)[/red]")
+        elif size_change < 0:
+            rprint(f"  |  Reduction: [green]{abs(size_change):.2f} MB ({size_pct:.2f}%)[/green]")
+        else:
+            rprint("  |  [cyan]No change[/cyan]")

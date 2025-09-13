@@ -4,11 +4,13 @@
 
 # Standard library imports
 import os
+import time
 import sqlite3
 
 # Third-party imports
 import pandas as pd
 from IPython.display import display
+from rich import print as rprint
 
 class DataLoader:
     """
@@ -47,7 +49,8 @@ class DataLoader:
 
         print(f"   └── Loading CSV file from {filepath}...")
         df = pd.read_csv(filepath, **kwargs)
-        DataLoader._report(df, show)
+        start_time = time.time()
+        DataLoader._report(df, start_time, show)
         return df
     
     ########################################################################################################################################
@@ -79,7 +82,8 @@ class DataLoader:
 
         print(f"   └── Loading Excel file from {filepath}...")
         df = pd.read_excel(filepath, **kwargs)
-        DataLoader._report(df, show)
+        start_time = time.time()
+        DataLoader._report(df, start_time, show)
         return df
 
     ########################################################################################################################################
@@ -111,7 +115,8 @@ class DataLoader:
 
         print(f"   └── Loading Parquet file from {filepath}...")
         df = pd.read_parquet(filepath, **kwargs)
-        DataLoader._report(df, show)
+        start_time = time.time()
+        DataLoader._report(df, start_time, show)
         return df
     
     ########################################################################################################################################
@@ -143,7 +148,8 @@ class DataLoader:
 
         print(f"   └── Loading JSON file from {filepath}...")
         df = pd.read_json(filepath, **kwargs)
-        DataLoader._report(df, show)
+        start_time = time.time()
+        DataLoader._report(df, start_time, show)
         return df
 
     ########################################################################################################################################
@@ -198,7 +204,8 @@ class DataLoader:
         finally:
             conn.close()
 
-        DataLoader._report(df, show)
+        start_time = time.time()
+        DataLoader._report(df, start_time, show)
         return df
 
     ########################################################################################################################################
@@ -230,7 +237,8 @@ class DataLoader:
 
         print(f"   └── Loading Feather file from {filepath}...")
         df = pd.read_feather(filepath, **kwargs)
-        DataLoader._report(df, show)
+        start_time = time.time()
+        DataLoader._report(df, start_time, show)
         return df
 
     ########################################################################################################################################
@@ -262,7 +270,8 @@ class DataLoader:
 
         print(f"   └── Loading ORC file from {filepath}...")
         df = pd.read_orc(filepath, **kwargs)
-        DataLoader._report(df, show)
+        start_time = time.time()
+        DataLoader._report(df, start_time, show)
         return df
 
     ########################################################################################################################################
@@ -296,7 +305,8 @@ class DataLoader:
 
         print(f"   └── Loading HDF5 file from {filepath}...")
         df = pd.read_hdf(filepath, key=key, **kwargs)
-        DataLoader._report(df, show)
+        start_time = time.time()
+        DataLoader._report(df, start_time, show)
         return df
 
     ########################################################################################################################################
@@ -305,7 +315,7 @@ class DataLoader:
     ########################################################################################################################################
     # 🗒️ _REPORT
     @staticmethod
-    def _report(df: pd.DataFrame, show: bool = False) -> None:
+    def _report(df: pd.DataFrame, start_time: float = None, show: bool = False) -> None:
         """
         Print summary information about a loaded dataset.
 
@@ -315,12 +325,48 @@ class DataLoader:
             The DataFrame to report on.
         show : bool, optional (default=False)
             If True, display the first 5 rows of the dataset.
+        start_time : float, optional
+            Epoch time when loading started, to measure elapsed time.
         """
-        print(f"   └── Loaded dataset with {df.shape[0]:,} rows and {df.shape[1]:,} columns")
+        # Basic info
+        rprint(f"   └── Loaded dataset with {df.shape[0]:,} rows and {df.shape[1]:,} columns")
+
+        # Missing values
+        missing = df.isna().sum()
+        cols_with_missing = missing[missing > 0]
+        num_cols_with_missing = len(cols_with_missing)
+        total_cols = df.shape[1]
+        total_cells = df.size
+        total_missing = missing.sum()
+        pct_missing_total = total_missing / total_cells * 100
+        pct_cols_missing = num_cols_with_missing / total_cols * 100
+
+        if num_cols_with_missing > 0:
+            rprint(f"   └── Columns with missing values: [red]{num_cols_with_missing:,}[/red] ([red]{pct_cols_missing:.2f}%[/red] of all columns)")
+            rprint(f"   └── Total missing values: [red]{total_missing:,}[/red] ([red]{pct_missing_total:.2f}%[/red] of all dataset values)")
+        else:
+            print("   └── No missing values detected")
+
+        # Duplicate rows
+        dup_count = df.duplicated().sum()
+        if dup_count > 0:
+            rprint(f"   └── Duplicate rows detected: [red]{dup_count:,}[/red]")
+        else:
+            print("   └── No duplicate rows detected")
+
+        # Elapsed time
+        if start_time is not None:
+            elapsed = time.time() - start_time
+            print(f"   └── Load time: {elapsed:.2f}s")
+
+        # Memory usage
+        mem_usage = df.memory_usage(deep=True).sum() / (1024**2)
+        rprint(f"   └── Memory usage: {mem_usage:.2f} MB")
 
         if df.empty:
             print("   └── ⚠️ Warning: Loaded DataFrame is empty!")
 
+        # Optional preview
         if show:
             print("\n🫧 Preview of loaded DataFrame:")
             display(df.head())

@@ -3,6 +3,7 @@
 # ===========================================================================================================================================
 
 # Standard library imports
+import re
 from typing import List, Optional, Tuple
 
 # Related third-party imports
@@ -66,17 +67,18 @@ class DataPreprocessor:
         ColumnTransformer
             A preprocessor for the DataFrame.
         """
-        print("\n   └── Detecting numerical and categorical columns...")
+        print("   └── Detecting numerical and categorical columns...")
 
         self.numerical_features = df.select_dtypes(include=["int64", "float64"]).columns.tolist()
         self.categorical_features = df.select_dtypes(include=["object", "category"]).columns.tolist()
-        print(f"       └── Numerical columns: {self.numerical_features}")
-        print(f"       └── Categorical columns: {self.categorical_features}")
+        print(f"   └── Numerical columns ({len(self.numerical_features)}): {self.numerical_features}")
+        print(f"   └── Categorical columns ({len(self.categorical_features)}): {self.categorical_features}")
+
 
         # ================================================================================================================================
         # ✍️ Define your custom transformers here (manual config section)
         # ================================================================================================================================
-        print("\n   └── Defining and applying preprocessing pipeline...")
+        print("   └── Defining preprocessing pipeline...")
 
         ##################################################################################################################################
         ##################################################################################################################################
@@ -192,9 +194,11 @@ class DataPreprocessor:
         # # Print ASCII-style pipeline diagram in CLI
         for name, transformer, cols in preprocessor.transformers:
             if name == "remainder" and transformer == "passthrough":
-                rprint(f"\n       └── [bold green]{name}[/bold green] (passthrough) -> columns {cols}")
+                cols_formatted = "[" + ", ".join(f"\033[38;5;214m{col}\033[0m" for col in cols) + "]"
+                print(f"\n   🔧 \033[1;38;5;214m{name}\033[0m (passthrough) → {cols_formatted}")
             else:
-                rprint(f"\n       └── [bold green]{name}[/bold green] → {cols}")
+                cols_formatted = "[" + ", ".join(f"\033[38;5;214m{col}\033[0m" for col in cols) + "]"
+                print(f"\n   🔧 \033[1;38;5;214m{name}\033[0m → {cols_formatted}")
                 
                 if hasattr(transformer, "named_steps"):
                     for step_name, step in transformer.named_steps.items():
@@ -211,9 +215,9 @@ class DataPreprocessor:
                                     manual_args[param_name] = val
 
                         if manual_args:
-                            rprint(f"           └── [bold yellow]{step_name}[/bold yellow]: [magenta]{step.__class__.__name__}[/magenta] [cyan]{manual_args}[/cyan]")
+                            rprint(f"      └── {step_name}: [magenta]{step.__class__.__name__}[/magenta] [cyan]{manual_args}[/cyan]")
                         else:
-                            rprint(f"           └── [bold yellow]{step_name}[/bold yellow]: [magenta]{step.__class__.__name__}[/magenta]")
+                            rprint(f"      └── {step_name}: [magenta]{step.__class__.__name__}[/magenta]")
 
                 else:
                     # Standalone transformer (not in a pipeline)
@@ -227,9 +231,9 @@ class DataPreprocessor:
                             if val != param.default:
                                 manual_args[param_name] = val
                     if manual_args:
-                        rprint(f"           └── [magenta]{transformer.__class__.__name__}[/magenta] [cyan]{manual_args}[/cyan]")
+                        rprint(f"      └── [magenta]{transformer.__class__.__name__}[/magenta] [cyan]{manual_args}[/cyan]")
                     else:
-                        rprint(f"           └── [magenta]{transformer.__class__.__name__}[/magenta]")
+                        rprint(f"      └── [magenta]{transformer.__class__.__name__}[/magenta]")
 
         return preprocessor
 
@@ -291,6 +295,8 @@ class DataPreprocessor:
         transformed_array = self.preprocessor.transform(df)
         feature_names = self._get_feature_names()
         transformed_df = pd.DataFrame(transformed_array, columns=feature_names, index=df.index)
+
+        print("   └── Data successfully preprocessed")
 
         if show:
             print("\n🫧 Transformed DataFrame:")
@@ -412,12 +418,12 @@ class DataPreprocessor:
 
         train_rows, train_cols = X_train.shape
         test_rows, test_cols = X_test.shape
-        print(f"   └── Dataset split completed: {len(X_train)} train samples, {len(X_test)} test samples.")
-        print(f"       └── Training set shape:  ({train_rows:,}, {train_cols:,})")
-        print(f"       └── Test set shape:      ({test_rows:,}, {test_cols:,})")
+        rprint(f"   └── Dataset split completed: {len(X_train):,} train samples, {len(X_test):,} test samples.")
+        print(f"   └── Training set shape: ({train_rows:,}, {train_cols:,})")
+        print(f"   └── Test set shape:     ({test_rows:,}, {test_cols:,})")
 
         if stratify:
-            print(f"       └── Stratified on target='{target}'")
+            print(f"   └── Stratified on target='{target}'")
 
         return X_train, X_test, y_train, y_test
     
