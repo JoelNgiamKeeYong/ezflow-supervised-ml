@@ -38,9 +38,9 @@ stratify: false
 # 🤖 MODEL TRAINING
 resampling_method: null # "null", "SMOTE", "SMOTE-ENN"
 hyperparameter_search_type: "grid" # "grid", "random", or "bayes"
+n_iter: 10 # only for random/bayes
 cv_folds: 5
 scoring_metric: r2
-n_iter: 10 # only for random/bayes
 
 #######################################################################################################################################
 #######################################################################################################################################
