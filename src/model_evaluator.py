@@ -6,10 +6,11 @@ import os
 import time
 import numpy as np
 import pandas as pd
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 import matplotlib.pyplot as plt
 import seaborn as sns
 
+from sklearn.preprocessing import label_binarize
 from sklearn.metrics import (
     # Regression
     mean_squared_error, mean_absolute_error, r2_score, mean_absolute_percentage_error,
@@ -22,6 +23,7 @@ from sklearn.calibration import calibration_curve
 from sklearn.inspection import permutation_importance
 from sklearn.model_selection import learning_curve, StratifiedKFold, KFold
 from tabulate import tabulate
+from rich import print as rprint
 
 # ===========================================================================================================================================
 # 📊 MAIN CLASS
@@ -30,25 +32,48 @@ class ModelEvaluator:
     """
     A unified model evaluator for classification and regression tasks.
 
-    Attributes:
-    -----------
-    config : Dict[str, Any], optional
-            Configuration dictionary containing parameters for cleaning rules, by default None
+    Parameters
+    ----------
+    task_type : str
+        Type of task: "classification" or "regression".
+    scoring_metric : str
+        Metric to optimize (e.g., "accuracy", "r2").
+    output_dir : str
+        Directory to save evaluation outputs.
+    generate_plots : bool, default=True
+        Whether to generate and save evaluation plots.
+    random_state : int
+        Random seed for reproducibility.
+    n_jobs : int
+        Number of parallel jobs.
+    minimum_precision : float, optional
+        Precision constraint for threshold tuning (classification).
+    minimum_recall : float, optional
+        Recall constraint for threshold tuning (classification).
     """
 
     ########################################################################################################################################
     ########################################################################################################################################
     # 🏗️ CLASS CONSTRUCTOR
-    def __init__(self, config: Dict[str, Any] = None):
-        """
-        Initializes the ModelTrainer class.
-
-        Parameters
-        ----------
-        config : Dict[str, Any], optional
-            Configuration dictionary containing parameters for model training rules, by default None
-        """
-        self.config = config or {}
+    def __init__(
+        self,
+        task_type: str = "classification",
+        scoring_metric: str = "accuracy",
+        output_dir: str = "output",
+        generate_plots: bool = True,
+        random_state: int = 42,
+        n_jobs: int = -1,
+        minimum_precision: Optional[float] = None,
+        minimum_recall: Optional[float] = None,
+    ):
+        self.task_type = task_type
+        self.scoring_metric = scoring_metric
+        self.output_dir = output_dir
+        self.generate_plots = generate_plots
+        self.random_state = random_state
+        self.n_jobs = n_jobs
+        self.minimum_precision = minimum_precision
+        self.minimum_recall = minimum_recall
 
     ########################################################################################################################################
     ########################################################################################################################################
@@ -68,24 +93,28 @@ class ModelEvaluator:
         list
             Updated trained_models with appended metrics + evaluation time.
         """
-
         # Ensure output directory exists
-        os.makedirs(self.config["output_dir"], exist_ok=True)
+        os.makedirs(self.output_dir, exist_ok=True)
 
         results = []
-        extra_data = {"roc": [], "pr": []} if self.config["task_type"] == "classification" else None
+        extra_data = {"roc": [], "pr": []} if self.task_type == "classification" else None
         feature_names = X_train.columns.tolist()
 
+        # Evaluate each model
         for i, (model_name, best_model, training_time, model_size_kb) in enumerate(trained_models):
             print(f"\n   📋 Evaluating \033[1;38;5;214m{model_name}\033[0m model...")
             start_time = time.time()
 
-            if self.config["task_type"] == "regression":
+            # Compute metrics
+            if self.task_type == "regression":
+                # Compute regression metrics
                 metrics = self._compute_regression_metrics(model_name, best_model, X_train, y_train, X_test, y_test)
+
             else:
-                metrics, roc_dict, pr_dict = self._compute_classification_metrics(
-                    model_name, best_model, X_train, y_train, X_test, y_test
-                )
+                # Compute classification metrics
+                metrics, roc_dict, pr_dict = self._compute_classification_metrics(model_name, best_model, X_train, y_train, X_test, y_test)
+
+                # Appending ROC and PR data
                 extra_data["roc"].append(roc_dict)
                 extra_data["pr"].append(pr_dict)
 
@@ -95,13 +124,13 @@ class ModelEvaluator:
             self._generate_feature_importance(model_name, best_model, X_train, y_train, feature_names)
 
             # 📈 Plots
-            if self.config["generate_plots"]:
-                if self.config["task_type"] == "regression":
+            if self.generate_plots:
+                if self.task_type == "regression":
                     self._plot_error_diagnostics(model_name, best_model, X_test, y_test)
                 else:
                     self._plot_confusion_matrix(model_name, best_model, X_test, y_test)
                     self._plot_calibration_curves(model_name, best_model, X_test, y_test)
-                    self._generate_learning_curve(self.config["task_type"], model_name, best_model, X_train, y_train)
+                    self._generate_learning_curve(self.task_type, model_name, best_model, X_train, y_train)
 
             # ⏱️ Evaluation time
             evaluation_time = time.time() - start_time
@@ -110,9 +139,9 @@ class ModelEvaluator:
             trained_models[i] = (model_name, best_model, training_time, model_size_kb, metrics, evaluation_time)
 
         # Save combined ROC/PR plots
-        if self.config["task_type"] == "classification" and self.config["generate_plots"]:
-            self._plot_combined_roc(extra_data["roc"])
-            self._plot_combined_pr(extra_data["pr"])
+        if self.task_type == "classification" and self.generate_plots:
+            self._plot_roc_curves(extra_data["roc"])
+            self._plot_pr_curves(extra_data["pr"])
 
         # Save evaluation metrics summary
         self._save_evaluation_metrics(results)
@@ -121,7 +150,7 @@ class ModelEvaluator:
 
     ########################################################################################################################################
     ########################################################################################################################################
-    # 📀 REGRESSION HELPERS
+    # 📀 COMPUTE REGRESSION METRICS
     def _compute_regression_metrics(self, model_name, model, X_train, y_train, X_test, y_test):
         def _calc(X, y):
             y_pred = model.predict(X)
@@ -142,6 +171,9 @@ class ModelEvaluator:
             **{k: f"{test[k]:.3f} ({train[k]:.3f})" for k in test}
         }
 
+    ########################################################################################################################################
+    ########################################################################################################################################
+    # 📀 PLOT ERROR DIAGNOSTICS
     def _plot_error_diagnostics(self, model_name, model, X_test, y_test):
         try:
             print(f"      └── Plotting regression error diagnostics...")
@@ -164,99 +196,598 @@ class ModelEvaluator:
             axs[1,1].scatter(y_test, residuals, alpha=0.6, edgecolor="k")
             axs[1,1].axhline(0,color="red",ls="--")
             axs[1,1].set_title("Prediction Error Plot")
+
+            # Save results
+            os.makedirs(f"{self.output_dir}/error_diagnostics", exist_ok=True)
+            file_path = f"{self.output_dir}/error_diagnostics/error_diagnostic{model_name.replace(' ', '_').lower()}.png"
             plt.tight_layout(rect=[0,0.03,1,0.95])
-            os.makedirs(f"{self.config["output_dir"]}/error_diagnostics", exist_ok=True)
-            plt.savefig(f"{self.config["output_dir"]}/error_diagnostics/error_diagnostics_{model_name.replace(' ','_').lower()}.png", dpi=300)
+            plt.savefig(file_path, dpi=300)
             plt.close()
+
+            rprint(f"      └── Saved error diagnostics to '{file_path}'")
+            
         except Exception as e:
-            print(f"      └── ⚠️ Failed diagnostics for {model_name}: {e}")
+            print(f"      └── ⚠️  Failed diagnostics for {model_name}: {e}")
 
     ########################################################################################################################################
     ########################################################################################################################################
-    # 📀 CLASSIFICATION HELPERS
-    def _compute_classification_metrics(self, model_name, model, X_train, y_train, X_test, y_test, default_threshold=0.5):
+    # 📀 COMPUTE CLASSIFICATION METRICS
+    def _compute_classification_metrics(self,model_name, model,X_train, y_train, X_test, y_test,default_threshold=0.5):
+        """
+        Computes classification metrics, ROC, and Precision-Recall (PR) curves for a given model.
+
+        Parameters
+        ----------
+        model_name : str
+            Name of the model for logging and plotting.
+        model : object
+            Trained scikit-learn compatible model with `predict` and optionally `predict_proba`.
+        X_train : array-like of shape (n_samples, n_features)
+            Training input features.
+        y_train : array-like of shape (n_samples,)
+            Training labels.
+        X_test : array-like of shape (n_samples, n_features)
+            Test input features.
+        y_test : array-like of shape (n_samples,)
+            Test labels.
+        default_threshold : float, default=0.5
+            Default threshold for binary classification if no custom threshold is selected.
+
+        Returns
+        -------
+        metrics : dict
+            Dictionary with overall metrics including Accuracy, Precision, Recall, F1-Score
+            in the format "test (train)" for easy reporting.
+        roc_dict : dict or None
+            ROC curve data including FPR, TPR, and AUC. 
+            For multiclass, returned as a dict of classes.
+        pr_dict : dict or None
+            Precision-Recall curve data including Precision, Recall, and AUC-PR.
+            For multiclass, returned as a dict of classes.
+
+        Notes
+        -----
+        - Supports threshold optimization for binary classifiers based on minimum precision/recall.
+        - Uses one-vs-rest strategy for multiclass ROC and PR curves.
+        """
         print("      └── Computing classification performance metrics...")
 
-        # Predict probs
-        y_train_probs = model.predict_proba(X_train)[:,1]
-        y_test_probs = model.predict_proba(X_test)[:,1]
+        # Determine classes
+        classes = getattr(model, "classes_", np.unique(y_train))
+        is_binary = len(classes) == 2
 
-        # Threshold optimization
-        def find_threshold(y_true, y_probs):
-            prec, rec, thresholds = precision_recall_curve(y_true, y_probs)
-            prec, rec = prec[:-1], rec[:-1]
-            if self.config["minimum_precision"] and not self.config["minimum_recall"]:
-                valid = prec >= self.config["minimum_precision"]
-                if np.any(valid): return thresholds[np.argmax(rec*valid)]
-            if self.config["minimum_recall"] and not self.config["minimum_precision"]:
-                valid = rec >= self.config["minimum_recall"]
-                if np.any(valid): return thresholds[np.argmax(prec*valid)]
-            if self.minimum_precision and self.config["minimum_recall"]:
-                valid = (prec>=self.config["minimum_precision"])&(rec>=self.config["minimum_recall"])
-                if np.any(valid):
-                    f1 = 2*(prec*rec)/(prec+rec+1e-8)
-                    return thresholds[np.argmax(f1*valid)]
-            return default_threshold
+        # Initialize outputs
+        roc_dict = None
+        pr_dict = None
 
-        threshold = find_threshold(y_train, y_train_probs)
-        y_train_pred, y_test_pred = (y_train_probs>=threshold).astype(int), (y_test_probs>=threshold).astype(int)
+        # ---------------- Binary Classification ----------------
+        if is_binary and hasattr(model, "predict_proba"):
+            y_train_probs = model.predict_proba(X_train)[:, 1]
+            y_test_probs  = model.predict_proba(X_test)[:, 1]
 
-        def scores(y_true,y_pred):
-            return {"Accuracy": accuracy_score(y_true,y_pred),
-                    "Precision": precision_score(y_true,y_pred),
-                    "Recall": recall_score(y_true,y_pred),
-                    "F1-Score": f1_score(y_true,y_pred)}
+            # Threshold optimization (optional)
+            def find_threshold(y_true, y_probs):
+                prec, rec, thresholds = precision_recall_curve(y_true, y_probs)
+                prec, rec = prec[:-1], rec[:-1]
+                # Simple F1-maximizing threshold
+                f1_scores = 2 * prec * rec / (prec + rec + 1e-8)
+                if np.any(f1_scores):
+                    return thresholds[np.argmax(f1_scores)]
+                return default_threshold
 
-        train, test = scores(y_train,y_train_pred), scores(y_test,y_test_pred)
+            threshold = find_threshold(y_train, y_train_probs)
+            y_train_pred = (y_train_probs >= threshold).astype(int)
+            y_test_pred  = (y_test_probs >= threshold).astype(int)
 
-        # ROC & PR
-        fpr,tpr,_ = roc_curve(y_test,y_test_probs); roc_auc=auc(fpr,tpr)
-        prec,rec,_ = precision_recall_curve(y_test,y_test_probs); pr_auc=auc(rec,prec)
+            # ROC / PR metrics
+            fpr, tpr, _ = roc_curve(y_test, y_test_probs)
+            prec, rec, _ = precision_recall_curve(y_test, y_test_probs)
+            roc_dict = {"Model": model_name, "FPR": fpr, "TPR": tpr, "AUC": auc(fpr, tpr)}
+            pr_dict  = {"Model": model_name, "Precision": prec, "Recall": rec, "AUC-PR": auc(rec, prec)}
 
-        return (
-            {"Model": model_name, **{k:f"{test[k]:.3f} ({train[k]:.3f})" for k in test}, "ROC-AUC":f"{roc_auc:.3f}", "PR-AUC":f"{pr_auc:.3f}"},
-            {"Model": model_name,"FPR":fpr,"TPR":tpr,"AUC":roc_auc},
-            {"Model": model_name,"Precision":prec,"Recall":rec,"AUC-PR":pr_auc}
-        )
+            roc_macro = roc_micro = roc_dict["AUC"]
+            pr_macro  = pr_micro  = pr_dict["AUC-PR"]
 
+        # ---------------- Multiclass Classification ----------------
+        else:
+            y_train_pred = model.predict(X_train)
+            y_test_pred  = model.predict(X_test)
+            y_train_probs = model.predict_proba(X_train) if hasattr(model, "predict_proba") else None
+            y_test_probs  = model.predict_proba(X_test)  if hasattr(model, "predict_proba") else None
+
+            roc_dict, pr_dict = {}, {}
+            fpr_all, tpr_all = [], []
+            prec_all, rec_all = [], []
+
+            for i, cls in enumerate(classes):
+                y_test_bin = (y_test == cls).astype(int)
+                y_score = y_test_probs[:, i]
+                fpr, tpr, _ = roc_curve(y_test_bin, y_score)
+                prec, rec, _ = precision_recall_curve(y_test_bin, y_score)
+                roc_dict[cls] = {"Model": model_name, "FPR": fpr, "TPR": tpr, "AUC": auc(fpr, tpr)}
+                pr_dict[cls]  = {"Model": model_name, "Precision": prec, "Recall": rec, "AUC-PR": auc(rec, prec)}
+
+                fpr_all.append(fpr)
+                tpr_all.append(tpr)
+                prec_all.append(prec)
+                rec_all.append(rec)
+
+            # Macro-average (simple mean)
+            roc_macro = np.mean([v["AUC"] for v in roc_dict.values()])
+            pr_macro  = np.mean([v["AUC-PR"] for v in pr_dict.values()])
+
+            # Micro-average: concatenate TPs/FPs
+            all_fpr = np.unique(np.concatenate(fpr_all))
+            tpr_micro = np.zeros_like(all_fpr)
+            for i in range(len(classes)):
+                tpr_micro += np.interp(all_fpr, fpr_all[i], tpr_all[i])
+            tpr_micro /= len(classes)
+            roc_micro = auc(all_fpr, tpr_micro)
+
+            all_rec = np.unique(np.concatenate(rec_all))
+            prec_micro = np.zeros_like(all_rec)
+            for i in range(len(classes)):
+                prec_micro += np.interp(all_rec, rec_all[i], prec_all[i])
+            prec_micro /= len(classes)
+            pr_micro = auc(all_rec, prec_micro)
+
+        # ---------------- Metric Calculator ----------------
+        def scores(y_true, y_pred):
+            average = "binary" if len(np.unique(y_true)) == 2 else "macro"
+            return {
+                "Accuracy": accuracy_score(y_true, y_pred),
+                "Precision": precision_score(y_true, y_pred, average=average, zero_division=0),
+                "Recall": recall_score(y_true, y_pred, average=average, zero_division=0),
+                "F1-Score": f1_score(y_true, y_pred, average=average, zero_division=0),
+                "ROC-AUC (macro)": roc_macro,
+                "ROC-AUC (micro)": roc_micro,
+                "PR-AUC (macro)": pr_macro,
+                "PR-AUC (micro)": pr_micro
+            }
+
+        train_metrics = scores(y_train, y_train_pred)
+        test_metrics  = scores(y_test, y_test_pred)
+
+        # Combine train/test metrics
+        metrics = {
+            "Model": model_name,
+            **{k: f"{test_metrics[k]:.3f} ({train_metrics[k]:.3f})" for k in test_metrics}
+        }
+
+        return metrics, roc_dict, pr_dict
+
+    ########################################################################################################################################
+    ########################################################################################################################################
+    # 📀 PLOT CONFUSION MATRIX
     def _plot_confusion_matrix(self, model_name, model, X_test, y_test):
+        """
+        Plots a confusion matrix for a given model and test set.
+
+        Parameters
+        ----------
+        model_name : str
+            Name of the model to use in titles and filenames.
+        model : object
+            Trained scikit-learn compatible model with a `predict` method.
+        X_test : array-like of shape (n_samples, n_features)
+            Test input features.
+        y_test : array-like of shape (n_samples,)
+            True labels for test data.
+
+        Notes
+        -----
+        - Uses model.classes_ if available; otherwise falls back to unique labels in y_test.
+        - Saves the figure as a high-resolution PNG in `self.output_dir/confusion_matrices`.
+        - Uses a blue color map with integer annotations.
+        """
         try:
+            print(f"      └── Generating confusion matrices...")
+
+            # Prepare output folder
+            output_dir = os.path.join(self.output_dir, "confusion_matrices")
+            os.makedirs(output_dir, exist_ok=True)
+
+            # Predict
             y_pred = model.predict(X_test)
-            cm = confusion_matrix(y_test,y_pred)
-            plt.figure(figsize=(6,5))
-            sns.heatmap(cm,annot=True,fmt="d",cmap="Blues",xticklabels=["Negative","Positive"],yticklabels=["Negative","Positive"])
-            plt.title(f"{model_name} Confusion Matrix")
-            plt.savefig(f"{self.config["output_dir"]}/confusion_matrix_{model_name.replace(' ','_').lower()}.png",dpi=300)
-            plt.close()
-        except Exception as e:
-            print(f"      └── ⚠️ Failed confusion matrix for {model_name}: {e}")
+            cm = confusion_matrix(y_test, y_pred)
 
+            # Determine class labels
+            if hasattr(model, "classes_"):
+                class_labels = model.classes_
+            else:
+                class_labels = np.unique(y_test)
+
+            # Plot
+            fig, ax = plt.subplots(figsize=(8, 6))
+            sns.heatmap(
+                cm,
+                annot=True,
+                fmt="d",
+                cmap="Blues",
+                xticklabels=class_labels,
+                yticklabels=class_labels,
+                cbar=True,
+                square=True,
+                linewidths=0.5,
+                ax=ax
+            )
+            ax.set_xlabel("Predicted Label", fontsize=14)
+            ax.set_ylabel("True Label", fontsize=14)
+            ax.set_title(f"{model_name} Confusion Matrix", fontsize=16)
+            plt.xticks(rotation=45)
+            plt.yticks(rotation=0)
+            plt.tight_layout()
+
+            # Save results
+            os.makedirs(f"{self.output_dir}/confusion_matrices", exist_ok=True)
+            file_path = f"{self.output_dir}/confusion_matrices/confusion_matrix_{model_name.replace(' ', '_').lower()}.png"
+            plt.savefig(file_path, dpi=300)
+            plt.close()
+
+            rprint(f"      └── Saved confusion matrices importance to '{file_path}'")
+
+        except Exception as e:
+            print(f"      └── ⚠️  Failed to plot confusion matrix for {model_name}: {e}")
+
+    ########################################################################################################################################
+    ########################################################################################################################################
+    # 📀 PLOT CALIBRATION CURVES
     def _plot_calibration_curves(self, model_name, model, X_test, y_test):
+        """
+        Plot calibration curves for a given model.
+        
+        Handles both binary and multiclass classification. Saves figures to output directory.
+
+        Parameters
+        ----------
+        model_name : str
+            Name of the model.
+        model : object
+            Trained classifier with a `predict_proba` method.
+        X_test : array-like
+            Test features.
+        y_test : array-like
+            True labels for test set.
+
+        Returns
+        -------
+        None
+        """
         try:
-            prob_true, prob_pred = calibration_curve(y_test, model.predict_proba(X_test)[:,1], n_bins=10)
-            plt.figure(figsize=(6,5))
-            plt.plot(prob_pred,prob_true,"s-")
-            plt.plot([0,1],[0,1],"k--")
-            plt.title(f"{model_name} Calibration Curve")
-            plt.savefig(f"{self.config["output_dir"]}/calibration_{model_name.replace(' ','_').lower()}.png",dpi=300)
-            plt.close()
+            print(f"      └── Generating calibration curves...")
+
+            os.makedirs(f"{self.output_dir}/calibration_curves", exist_ok=True)
+            file_path = f"{self.output_dir}/calibration_curves/calibration_curve_{model_name.replace(' ', '_').lower()}.png"
+
+            if not hasattr(model, "predict_proba"):
+                print(f"      └── ⚠️  Model {model_name} does not support `predict_proba`, skipping calibration curve.")
+                return
+
+            classes = np.unique(y_test)
+            n_classes = len(classes)
+
+            # Binary classification
+            if n_classes == 2:
+                prob_true, prob_pred = calibration_curve(y_test, model.predict_proba(X_test)[:,1], n_bins=10)
+                plt.figure(figsize=(8,6))
+                plt.plot(prob_pred, prob_true, "s-", label="Calibration")
+                plt.plot([0,1],[0,1], "k--", label="Perfectly calibrated")
+                plt.title(f"{model_name} Calibration Curve", fontsize=16)
+                plt.xlabel("Predicted Probability", fontsize=14)
+                plt.ylabel("True Probability", fontsize=14)
+                plt.ylim([0, 1.05])
+                plt.legend()
+                plt.tight_layout()
+                plt.savefig(file_path, dpi=300)
+                plt.close()
+
+            # Multiclass classification (One-vs-Rest)
+            else:
+                y_test_probs = model.predict_proba(X_test)
+                plt.figure(figsize=(10,7))
+                for i, cls in enumerate(classes):
+                    prob_true, prob_pred = calibration_curve((y_test==cls).astype(int), y_test_probs[:,i], n_bins=10)
+                    plt.plot(prob_pred, prob_true, marker='o', linestyle='-', linewidth=2, label=f"Class {cls}")
+                plt.plot([0,1],[0,1], "k--", lw=1, label="Perfectly calibrated")
+                plt.title(f"{model_name} Calibration Curves (Multiclass)", fontsize=16)
+                plt.xlabel("Predicted Probability", fontsize=14)
+                plt.ylabel("True Probability", fontsize=14)
+                plt.ylim([0, 1.05])
+                plt.legend(title="Classes", bbox_to_anchor=(1.05,1), loc="upper left")
+                plt.tight_layout()
+                plt.savefig(file_path, dpi=300, bbox_inches="tight")
+                plt.close()
+                
+            rprint(f"      └── Saved confusion matrices importance to '{file_path}'")
+
         except Exception as e:
-            print(f"      └── ⚠️ Failed calibration curve for {model_name}: {e}")
+            print(f"      └── ⚠️  Failed calibration curve for {model_name}: {e}")
 
-    def _plot_combined_roc(self, roc_data):
-        plt.figure(figsize=(7,6))
-        for d in roc_data:
-            plt.plot(d["FPR"],d["TPR"],label=f"{d['Model']} (AUC={d['AUC']:.3f})")
-        plt.plot([0,1],[0,1],"k--")
-        plt.legend(); plt.title("ROC Curves")
-        plt.savefig(f"{self.config["output_dir"]}/combined_roc.png",dpi=300); plt.close()
+    ########################################################################################################################################
+    ########################################################################################################################################
+    # 📀 PLOT ROC CURVES
+    def _plot_roc_curves(self, roc_data):
+        """
+        Plots ROC curves for multiple models:
+        - Binary models → combined chart
+        - Multiclass models → 
+            * One combined macro-average chart (all models)
+            * One combined micro-average chart (all models)
+            * Per-class chart per model
 
-    def _plot_combined_pr(self, pr_data):
-        plt.figure(figsize=(7,6))
-        for d in pr_data:
-            plt.plot(d["Recall"],d["Precision"],label=f"{d['Model']} (AUC={d['AUC-PR']:.3f})")
-        plt.legend(); plt.title("Precision-Recall Curves")
-        plt.savefig(f"{self.config["output_dir"]}/combined_pr.png",dpi=300); plt.close()
+        Parameters
+        ----------
+        roc_data : list
+            List of dicts containing ROC info per model. Can handle multiclass as dict of classes.
+        """
+        print(f"\n   └── Generating ROC curves...")
+
+        sns.set_theme(style="whitegrid")
+        palette = sns.color_palette("tab10")
+
+        # Create output folder
+        output_dir = os.path.join(self.output_dir, "roc_curves")
+        os.makedirs(output_dir, exist_ok=True)
+
+        # Prepare figures and axes
+        binary_fig, binary_ax = plt.subplots(figsize=(10, 7))
+        macro_fig, macro_ax = plt.subplots(figsize=(10, 7))
+        micro_fig, micro_ax = plt.subplots(figsize=(10, 7))
+
+        for idx, d in enumerate(roc_data):
+            if d is None:
+                continue
+
+            # Extract model name
+            if isinstance(d, dict) and all(isinstance(v, dict) for v in d.values()):
+                first_cls = next(iter(d))
+                model_name = d[first_cls]["Model"]
+            else:
+                model_name = d["Model"]
+
+            # --- Multiclass case ---
+            if isinstance(d, dict) and all(isinstance(v, dict) for v in d.values()):
+                # Macro-average
+                all_fpr = np.unique(np.concatenate([v["FPR"] for v in d.values()]))
+                mean_tpr = np.zeros_like(all_fpr)
+                for cls_dict in d.values():
+                    mean_tpr += np.interp(all_fpr, cls_dict["FPR"], cls_dict["TPR"])
+                mean_tpr /= len(d)
+                auc_macro = np.mean([v["AUC"] for v in d.values()])
+                macro_ax.plot(all_fpr, mean_tpr, 
+                            label=f"{model_name} (AUC={auc_macro:.3f})",
+                            color=palette[idx % len(palette)],
+                            linewidth=2)
+
+                # Micro-average
+                all_fpr_micro = np.unique(np.concatenate([v["FPR"] for v in d.values()]))
+                tpr_micro = np.zeros_like(all_fpr_micro)
+                for cls_dict in d.values():
+                    tpr_micro += np.interp(all_fpr_micro, cls_dict["FPR"], cls_dict["TPR"])
+                tpr_micro /= len(d)
+                auc_micro = np.mean([v["AUC"] for v in d.values()])
+                micro_ax.plot(all_fpr_micro, tpr_micro, 
+                            label=f"{model_name} (AUC={auc_micro:.3f})",
+                            color=palette[idx % len(palette)],
+                            linewidth=2,
+                            linestyle='--')
+
+                # Per-class ROC
+                per_class_fig, per_class_ax = plt.subplots(figsize=(10, 7))
+                for cls, cls_dict in d.items():
+                    per_class_ax.plot(cls_dict["FPR"], cls_dict["TPR"],
+                                    label=f"Class {cls} (AUC={cls_dict['AUC']:.3f})",
+                                    linewidth=2)
+                per_class_ax.plot([0, 1], [0, 1], "k--", lw=1, label="Random chance")
+                per_class_ax.set_title(f"Per-Class ROC Curves: {model_name}", fontsize=16)
+                per_class_ax.set_xlabel("False Positive Rate", fontsize=14)
+                per_class_ax.set_ylabel("True Positive Rate", fontsize=14)
+                per_class_ax.set_xlim([0, 1])
+                # Dynamic Y-limit: top 5% above max TPR
+                per_class_ax.set_ylim([0, min(1.05, per_class_ax.get_ylim()[1]*1.05)])
+                per_class_ax.legend(title="Classes", bbox_to_anchor=(1.05, 1), loc="upper left")
+                per_class_fig.tight_layout()
+                per_class_fig.savefig(
+                    os.path.join(output_dir, f"roc_{model_name.replace(' ', '_').lower()}.png"),
+                    dpi=300,
+                    bbox_inches="tight"
+                )
+                plt.close(per_class_fig)
+
+            else:
+                # --- Binary case ---
+                binary_ax.plot(d["FPR"], d["TPR"], 
+                           label=f"{model_name} (AUC={d['AUC']:.3f})",
+                           color=palette[idx % len(palette)],
+                           linewidth=2.5)
+
+        # --- Finalize Binary ROC ---
+        if binary_ax.has_data():
+            binary_ax.plot([0, 1], [0, 1], "k--", lw=1, label="Random chance")
+            binary_ax.set_xlabel("False Positive Rate", fontsize=14)
+            binary_ax.set_ylabel("True Positive Rate", fontsize=14)
+            binary_ax.set_title("ROC Curves (Binary Models)", fontsize=16)
+            binary_ax.set_xlim([0, 1])
+            # Dynamic Y-limit
+            ymax = min(1.05, max([line.get_ydata().max() for line in binary_ax.lines])*1.05)
+            binary_ax.set_ylim([0, ymax])
+            binary_ax.legend()
+            binary_fig.tight_layout()
+            binary_fig.savefig(os.path.join(output_dir, "roc_combined_binary.png"), dpi=300)
+            plt.close(binary_fig)
+
+        # --- Finalize Macro ROC ---
+        if macro_ax.has_data():
+            macro_ax.plot([0, 1], [0, 1], "k--", lw=1, label="Random chance")
+            macro_ax.set_xlabel("False Positive Rate", fontsize=14)
+            macro_ax.set_ylabel("True Positive Rate", fontsize=14)
+            macro_ax.set_title("ROC Curves (Macro Averages)", fontsize=16)
+            macro_ax.set_xlim([0, 1])
+            ymax = min(1.05, max([line.get_ydata().max() for line in macro_ax.lines])*1.05)
+            macro_ax.set_ylim([0, ymax])
+            macro_ax.legend()
+            macro_fig.tight_layout()
+            macro_fig.savefig(os.path.join(output_dir, "roc_combined_macro.png"), dpi=300)
+            plt.close(macro_fig)
+
+        # --- Finalize Micro ROC ---
+        if micro_ax.has_data():
+            micro_ax.plot([0, 1], [0, 1], "k--", lw=1, label="Random chance")
+            micro_ax.set_xlabel("False Positive Rate", fontsize=14)
+            micro_ax.set_ylabel("True Positive Rate", fontsize=14)
+            micro_ax.set_title("ROC Curves (Micro Averages)", fontsize=16)
+            micro_ax.set_xlim([0, 1])
+            ymax = min(1.05, max([line.get_ydata().max() for line in micro_ax.lines])*1.05)
+            micro_ax.set_ylim([0, ymax])
+            micro_ax.legend()
+            micro_fig.tight_layout()
+            micro_fig.savefig(os.path.join(output_dir, "roc_combined_micro.png"), dpi=300)
+            plt.close(micro_fig)
+
+        rprint(f"   └── Saved ROC curves to 'output/roc_curves' folder")
+
+    ########################################################################################################################################
+    ########################################################################################################################################
+    # 📀 PLOT PRECISION-RECALL CURVES
+    def _plot_pr_curves(self, pr_data):
+        """
+        Plots Precision-Recall curves for multiple models:
+        - Binary models → combined chart
+        - Multiclass models → 
+            * One combined macro-average chart (all models)
+            * One combined micro-average chart (all models)
+            * Per-class chart per model
+
+        Parameters
+        ----------
+        pr_data : list
+            List of dicts containing PR info per model. Can handle multiclass as dict of classes.
+        """
+        print(f"   └── Generating PR curves...")
+
+        sns.set_theme(style="whitegrid")
+        palette = sns.color_palette("tab10")
+
+        # Create output folder
+        output_dir = os.path.join(self.output_dir, "pr_curves")
+        os.makedirs(output_dir, exist_ok=True)
+
+        # Prepare figures
+        binary_fig, binary_ax = plt.subplots(figsize=(10, 7))
+        macro_fig, macro_ax = plt.subplots(figsize=(10, 7))
+        micro_fig, micro_ax = plt.subplots(figsize=(10, 7))
+
+        for idx, d in enumerate(pr_data):
+            if d is None:
+                continue
+
+            # Extract model name
+            if isinstance(d, dict) and all(isinstance(v, dict) for v in d.values()):
+                first_cls = next(iter(d))
+                model_name = d[first_cls]["Model"]
+            else:
+                model_name = d["Model"]
+
+            # --- Multiclass case ---
+            if isinstance(d, dict) and all(isinstance(v, dict) for v in d.values()):
+                # Macro-average
+                all_rec = np.unique(np.concatenate([v["Recall"] for v in d.values()]))
+                mean_prec = np.zeros_like(all_rec)
+                for cls_dict in d.values():
+                    mean_prec += np.interp(all_rec, cls_dict["Recall"][::-1], cls_dict["Precision"][::-1])[::-1]
+                mean_prec /= len(d)
+                auc_macro = np.mean([v["AUC-PR"] for v in d.values()])
+                macro_ax.plot(all_rec, mean_prec,
+                            label=f"{model_name} (Macro AUC-PR={auc_macro:.3f})",
+                            color=palette[idx % len(palette)],
+                            linewidth=2.5)
+
+                # Micro-average
+                all_rec_micro = np.unique(np.concatenate([v["Recall"] for v in d.values()]))
+                mean_prec_micro = np.zeros_like(all_rec_micro)
+                for cls_dict in d.values():
+                    mean_prec_micro += np.interp(all_rec_micro, cls_dict["Recall"][::-1], cls_dict["Precision"][::-1])[::-1]
+                mean_prec_micro /= len(d)
+                auc_micro = np.mean([v["AUC-PR"] for v in d.values()])
+                micro_ax.plot(all_rec_micro, mean_prec_micro,
+                            label=f"{model_name} (Micro AUC-PR={auc_micro:.3f})",
+                            color=palette[idx % len(palette)],
+                            linewidth=2.5,
+                            linestyle='--')
+
+                # Per-class PR
+                per_class_fig, per_class_ax = plt.subplots(figsize=(10, 7))
+                for cls, cls_dict in d.items():
+                    per_class_ax.plot(cls_dict["Recall"], cls_dict["Precision"],
+                                    label=f"Class {cls} (AUC-PR={cls_dict['AUC-PR']:.3f})",
+                                    linewidth=2)
+                per_class_ax.set_title(f"Per-Class PR Curves: {model_name}", fontsize=16)
+                per_class_ax.set_xlabel("Recall", fontsize=14)
+                per_class_ax.set_ylabel("Precision", fontsize=14)
+                per_class_ax.plot([0, 1], [0, 1], "k--", lw=1, label="Random chance")
+                per_class_ax.set_xlim([0, 1])
+                # Dynamic Y-limit with 5% margin
+                ymax = min(1.05, max([line.get_ydata().max() for line in per_class_ax.lines])*1.05)
+                per_class_ax.set_ylim([0, ymax])
+                per_class_ax.legend(title="Classes", bbox_to_anchor=(1.05, 1), loc="upper left")
+                per_class_fig.tight_layout()
+                per_class_fig.savefig(
+                    os.path.join(output_dir, f"pr_{model_name.replace(' ', '_').lower()}.png"),
+                    dpi=300,
+                    bbox_inches="tight"
+                )
+                plt.close(per_class_fig)
+
+            else:
+                # --- Binary case ---
+                binary_ax.plot(d["Recall"], d["Precision"],
+                            label=f"{model_name} (AUC-PR={d['AUC-PR']:.3f})",
+                            color=palette[idx % len(palette)],
+                            linewidth=2.5)
+
+        # --- Finalize Binary PR ---
+        if binary_ax.has_data():
+            binary_ax.plot([0, 1], [0, 1], "k--", lw=1, label="Random chance")
+            binary_ax.set_xlabel("Recall", fontsize=14)
+            binary_ax.set_ylabel("Precision", fontsize=14)
+            binary_ax.set_title("Precision-Recall Curves (Binary Models)", fontsize=16)
+            binary_ax.set_xlim([0, 1])
+            ymax = min(1.05, max([line.get_ydata().max() for line in binary_ax.lines])*1.05)
+            binary_ax.set_ylim([0, ymax])
+            binary_ax.legend()
+            binary_fig.tight_layout()
+            binary_fig.savefig(os.path.join(output_dir, "pr_combined_binary.png"), dpi=300)
+            plt.close(binary_fig)
+
+        # --- Finalize Macro PR ---
+        if macro_ax.has_data():
+            macro_ax.plot([0, 1], [0, 1], "k--", lw=1, label="Random chance")
+            macro_ax.set_xlabel("Recall", fontsize=14)
+            macro_ax.set_ylabel("Precision", fontsize=14)
+            macro_ax.set_title("Precision-Recall Curves (Macro Averages)", fontsize=16)
+            macro_ax.set_xlim([0, 1])
+            ymax = min(1.05, max([line.get_ydata().max() for line in macro_ax.lines])*1.05)
+            macro_ax.set_ylim([0, ymax])
+            macro_ax.legend()
+            macro_fig.tight_layout()
+            macro_fig.savefig(os.path.join(output_dir, "pr_combined_macro.png"), dpi=300)
+            plt.close(macro_fig)
+
+        # --- Finalize Micro PR ---
+        if micro_ax.has_data():
+            micro_ax.plot([0, 1], [0, 1], "k--", lw=1, label="Random chance")
+            micro_ax.set_xlabel("Recall", fontsize=14)
+            micro_ax.set_ylabel("Precision", fontsize=14)
+            micro_ax.set_title("Precision-Recall Curves (Micro Averages)", fontsize=16)
+            micro_ax.set_xlim([0, 1])
+            ymax = min(1.05, max([line.get_ydata().max() for line in micro_ax.lines])*1.05)
+            micro_ax.set_ylim([0, ymax])
+            micro_ax.legend()
+            micro_fig.tight_layout()
+            micro_fig.savefig(os.path.join(output_dir, "pr_combined_micro.png"), dpi=300)
+            plt.close(micro_fig)
+
+        rprint(f"   └── Saved PR curves to 'output/pr_curves' folder")
 
     ########################################################################################################################################
     ########################################################################################################################################
@@ -279,7 +810,7 @@ class ModelEvaluator:
         Returns:
             None. Saves feature importances to file.
         """
-        print(f"      └── Generating feature importance scores for {model_name}...")
+        print(f"      └── Generating feature importance scores...")
 
         try:
             # If model is a pipeline, get the actual estimator
@@ -304,23 +835,23 @@ class ModelEvaluator:
             else:
                 perm_importance = permutation_importance(
                     final_estimator, X_train, y_train,
-                    scoring=self.config["scoring_metric"],
+                    scoring=self.scoring_metric,
                     n_repeats=10,
-                    random_state=self.config["random_state"]
+                    random_state=self.random_state
                 )
                 feature_importances = pd.Series(
                     perm_importance.importances_mean, index=feature_names
                 ).sort_values(ascending=False)
                 
             # Save results
-            os.makedirs(f"{self.config["output_dir"]}/feature_importance", exist_ok=True)
-            file_path = f"{self.config["output_dir"]}/feature_importance/feature_importances_{model_name.replace(' ', '_').lower()}.txt"
+            os.makedirs(f"{self.output_dir}/feature_importance", exist_ok=True)
+            file_path = f"{self.output_dir}/feature_importance/feature_importances_{model_name.replace(' ', '_').lower()}.txt"
 
             with open(file_path, "w", encoding="utf-8") as f:
                 f.write(f"--- 📊 Feature Importance Scores for {model_name} ---\n")
                 f.write(feature_importances.to_string())
 
-            print(f"      └── Saved feature importance to {file_path}")
+            rprint(f"      └── Saved feature importance to '{file_path}'")
 
         except Exception as e:
             print(f"      └── ⚠️  Could not compute feature importance: {str(e)}")
@@ -343,18 +874,18 @@ class ModelEvaluator:
             None. Saves learning curve as PNG.
         """
         try:
-            print(f"      └── Generating learning curve for {model_name}...")
+            print(f"      └── Generating learning curve...")
 
             # CV Strategy
             if task_type == "classification":
                 unique, counts = np.unique(y_train, return_counts=True)
                 if np.min(counts) < 2:
                     print("      └── ⚠️ Not enough samples for some classes → using KFold instead.")
-                    cv = KFold(n_splits=5, shuffle=True, random_state=self.config["random_state"])
+                    cv = KFold(n_splits=5, shuffle=True, random_state=self.random_state)
                 else:
-                    cv = StratifiedKFold(n_splits=5, shuffle=True, random_state=self.config["random_state"])
+                    cv = StratifiedKFold(n_splits=5, shuffle=True, random_state=self.random_state)
             else:
-                cv = KFold(n_splits=5, shuffle=True, random_state=self.config["random_state"])
+                cv = KFold(n_splits=5, shuffle=True, random_state=self.random_state)
 
             # Training sizes
             train_sizes = np.linspace(0.1, 1.0, 10)
@@ -364,8 +895,8 @@ class ModelEvaluator:
                 model, X_train, y_train,
                 train_sizes=train_sizes,
                 cv=cv,
-                scoring=self.config["scoring_metric"],
-                n_jobs=self.config["n_jobs"]
+                scoring=self.scoring_metric,
+                n_jobs=self.n_jobs
             )
 
             train_mean, train_std = np.mean(train_scores, axis=1), np.std(train_scores, axis=1)
@@ -380,18 +911,18 @@ class ModelEvaluator:
 
             plt.title(f"Learning Curves - {model_name}", fontsize=14, fontweight="bold")
             plt.xlabel("Training Examples", fontsize=12)
-            plt.ylabel(self.config["scoring_metric"].upper(), fontsize=12)
+            plt.ylabel(self.scoring_metric.upper(), fontsize=12)
             plt.grid(True, linestyle="--", alpha=0.7)
             plt.legend(loc="best", fontsize=10)
             plt.tight_layout()
 
             # Save
-            os.makedirs(f"{self.config["output_dir"]}/learning_curves", exist_ok=True)
-            file_path = f"{self.config["output_dir"]}/learning_curves/learning_curve_{model_name.replace(' ', '_').lower()}.png"
+            os.makedirs(f"{self.output_dir}/learning_curves", exist_ok=True)
+            file_path = f"{self.output_dir}/learning_curves/learning_curve_{model_name.replace(' ', '_').lower()}.png"
             plt.savefig(file_path, dpi=300)
             plt.close()
 
-            print(f"      └── Saved learning curve to {file_path}")
+            rprint(f"      └── Saved learning curve to '{file_path}'")
 
         except Exception as e:
             print(f"      └── ⚠️ Failed to generate learning curve: {e}")
@@ -399,30 +930,46 @@ class ModelEvaluator:
     ########################################################################################################################################
     ########################################################################################################################################
     # 📝 SAVE EVALUATION METRICS
-    def _save_evaluation_metrics(self, results):
+    def _save_evaluation_metrics(self, results, filename="evaluation_metrics_summary.md"):
         """
-        Save a consolidated evaluation metrics summary for all models.
+        Save a consolidated evaluation metrics summary for all models in a professional, 
+        Markdown/README-friendly format.
 
-        Args:
-            results (list of dict): Each dict contains metrics for one model.
+        Parameters
+        ----------
+        results : list of dict
+            Each dict contains metrics for one model.
+        filename : str, default "evaluation_metrics_summary.md"
+            Output filename.
 
-        Returns:
-            None. Saves metrics to text file.
+        Returns
+        -------
+        None
+            Saves metrics to a Markdown file in the output directory.
         """
         try:
-            metrics_file_path = f"{self.config["output_dir"]}/evaluation_metrics_summary.txt"
-            with open(metrics_file_path, "w", encoding="utf-8") as f:
-                f.write("📋 Consolidated Evaluation Metrics:\n")
-                f.write("(Test metrics first, training metrics in [brackets])\n\n")
-                metrics_table = tabulate(
-                    pd.DataFrame(results),
-                    headers="keys",
-                    tablefmt="grid",
-                    floatfmt=".3f"
-                )
+            output_path = os.path.join(self.output_dir, filename)
+            with open(output_path, "w", encoding="utf-8") as f:
+                f.write("# 📊 Model Evaluation Metrics Summary\n\n")
+                f.write("This document summarizes the performance of all trained models.\n\n")
+                f.write("**Note:** Test metrics are reported first; training metrics are shown in `(brackets)`.\n\n")
+
+                # Convert results to DataFrame for tabulation
+                df = pd.DataFrame(results)
+
+                # Convert metrics to Markdown table using tabulate
+                metrics_table = tabulate(df, headers="keys", tablefmt="github", floatfmt=".3f")
                 f.write(metrics_table + "\n\n")
 
-            print(f"      └── Saved evaluation metrics summary to {metrics_file_path}")
+                f.write("---\n")
+                f.write("Generated automatically by the Model Evaluation pipeline.\n")
+
+                # VS Code preview refresh tip
+                f.write("> ⚠️ **Tip:** If you are viewing this in VS Code Markdown Preview, ")
+                f.write("you may need to manually refresh (`Ctrl+Shift+R`) or re-open the preview ")
+                f.write("to see the latest updates.\n")
+
+            rprint(f"\n   └── Saved evaluation metrics summary to '{output_path}'")
 
         except Exception as e:
-            print(f"      └── ⚠️ Failed to save evaluation metrics: {e}")
+            print(f"   └── ⚠️ Failed to save evaluation metrics: {e}")

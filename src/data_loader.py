@@ -11,6 +11,7 @@ import sqlite3
 import pandas as pd
 from IPython.display import display
 from rich import print as rprint
+from sklearn.datasets import load_iris, load_diabetes
 
 class DataLoader:
     """
@@ -20,6 +21,50 @@ class DataLoader:
     Each loader is a static method and can be called independently.
     """
 
+    ########################################################################################################################################
+    ########################################################################################################################################
+    ########################################################################################################################################
+    ########################################################################################################################################
+    # 📥 LOAD SCIKIT-LEARN SAMPLE DATASETS
+    @staticmethod
+    def load_sklearn_sample(task_type: str = "classification", show: bool = False, **kwargs) -> pd.DataFrame:
+        """
+        Load a sample dataset from scikit-learn.
+
+        Parameters
+        ----------
+        task_type : str, optional (default="classification")
+            Type of dataset to load. Options:
+            - "classification": Iris dataset (multiclass classification)
+            - "regression": Diabetes dataset (continuous regression)
+        show : bool, optional (default=False)
+            If True, displays the head of the DataFrame.
+        **kwargs : dict
+            Additional arguments for dataset loaders.
+
+        Returns
+        -------
+        pd.DataFrame
+            Dataset as a pandas DataFrame with features and target column.
+        """
+        task_type = task_type.lower().strip()
+
+        if task_type == "classification":
+            print("   └── Loading scikit-learn Iris classification dataset...")
+            dataset = load_iris(as_frame=True, **kwargs)
+        elif task_type == "regression":
+            print("   └── Loading scikit-learn Diabetes regression dataset...")
+            dataset = load_diabetes(as_frame=True, **kwargs)
+        else:
+            raise ValueError(f"❌ Unsupported task_type '{task_type}'. Choose 'classification' or 'regression'.")
+
+        df = dataset.frame
+        df["target"] = dataset.target
+
+        start_time = time.time()
+        DataLoader._report(df, start_time, show)
+        return df
+    
     ########################################################################################################################################
     ########################################################################################################################################
     ########################################################################################################################################

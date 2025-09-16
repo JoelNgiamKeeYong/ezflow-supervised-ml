@@ -1,6 +1,6 @@
 # config_models.py
 from sklearn.ensemble import RandomForestRegressor
-from sklearn.linear_model import LogisticRegression
+from sklearn.linear_model import LinearRegression, LogisticRegression
 
 models = {
     ########################################################################################################################################
@@ -22,7 +22,7 @@ models = {
     # },
     ########################################################################################################################################
     ########################################################################################################################################
-    # 🟢 RANDOM FOREST
+    # 🟢 RANDOM FOREST REGRESSOR
     "RandomForest": {
         "model": RandomForestRegressor(),
         "params_grid": {
@@ -45,4 +45,48 @@ models = {
     ########################################################################################################################################
     # 🔴 OTHER MODELS
     # ...
+}
+
+###########################################################################
+# 🟢 DEBUG MODE MODELS
+###########################################################################
+
+# Debug classification models (fast & simple)
+models_debug_classification = {
+    "LogisticRegression": {
+        "model": LogisticRegression(max_iter=100, random_state=42),
+        "params_grid": {
+            "model__C": [1.0],
+            "model__penalty": ["l2"],
+        },
+        "params_random": {
+            "model__C": [0.1, 1.0, 10.0],
+            "model__penalty": ["l2"],
+        },
+        "params_bayes": {
+            "model__C": (1e-3, 1e3, "log-uniform"),
+        },
+    }
+}
+
+# Debug regression models (fast & simple)
+models_debug_regression = {
+    "LinearRegression": {
+        "model": LinearRegression(),
+        "params_grid": {
+            "model__fit_intercept": [True, False],
+            "model__positive": [True, False],
+        },
+        "params_random": {
+            "model__fit_intercept": [True, False],
+            "model__positive": [True, False],
+        },
+        "params_bayes": {
+            # Bayesian search usually expects continuous ranges,
+            # but LinearRegression has very few tunable params.
+            # We'll still keep discrete options for consistency.
+            "model__fit_intercept": [True, False],
+            "model__positive": [True, False],
+        },
+    }
 }
