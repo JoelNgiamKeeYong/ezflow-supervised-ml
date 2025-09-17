@@ -29,38 +29,82 @@ class DataCleaner:
     ########################################################################################################################################
     ########################################################################################################################################
     # 🧼 FULL CLEANING FUNCTION
-    def clean_all(self, df: pd.DataFrame) -> pd.DataFrame:
+    def clean_all(self, df: pd.DataFrame, mode: str = "all") -> pd.DataFrame:
         """
-        Runs the full cleaning pipeline using all individual cleaning methods.
+        Runs the cleaning pipeline selectively or fully depending on `mode`.
 
         Parameters
         ----------
         df : pd.DataFrame
-            Raw HDB res dataset
+            Raw dataset
+        mode : str, default="all"
+            Cleaning mode:
+            - "all"    : Run all cleaning functions
+            - (extend with other keywords as needed)
 
         Returns
         -------
         pd.DataFrame
-            Fully cleaned dataset
+            Cleaned dataset
         """
         start_time = time.time()  
-
         df_cleaned = df.copy()
-        df_cleaned = self.convert_column_names_to_snake_case(df=df_cleaned)
-        df_cleaned = self.drop_irrelevant_features(df=df_cleaned, columns_to_drop=["url", 'n_non_stop_words', 'n_non_stop_unique_tokens', 'num_hrefs', 'num_self_hrefs', 'num_imgs', 'num_videos', 'n_comments', 'average_token_length', 'self_reference_min_shares', 'self_reference_max_shares', 'self_reference_avg_shares', 'num_keywords', 'kw_min_min', 'kw_max_min', 'kw_avg_min', 'kw_min_max', 'kw_max_max', 'kw_avg_max', 'kw_min_avg', 'kw_max_avg', 'kw_avg_avg'])
-        # df_cleaned = self.drop_duplicate_rows(df=df_cleaned)
-        # df_cleaned = self.clean_flat_type(df_cleaned)
-        # df_cleaned = self.clean_lease_commence_date(df_cleaned)
-        # df_cleaned = self.clean_storey_range(df_cleaned)
-        # df_cleaned = self.clean_missing_names(df_cleaned)
-        # df_cleaned = self.drop_irrelevant_columns(df_cleaned)
-        # df_cleaned = self.extract_year_month(df_cleaned)
-        # df_cleaned = self.process_remaining_lease(df_cleaned)
 
-        # Calculate elapsed time
+        # ================================================================================================================================
+        # ✍️ Define your custom cleaning pipelines here (manual config section)
+        # ================================================================================================================================    
+        # Define cleaning pipelines
+        cleaning_steps = {
+            "snake_case_columns": [
+                lambda df: self.convert_column_names_to_snake_case(df=df)
+            ],
+            "rearrange_columns": [
+                lambda df: self.move_column_before(df=df, col_to_move="shares", before_col="id")
+            ],
+            "irrelevant": [
+                lambda df: self.drop_irrelevant_features(df=df, columns_to_drop=[
+                    "id", "url", "n_non_stop_words", "n_non_stop_unique_tokens",
+                    "num_hrefs", "num_self_hrefs", "num_imgs", "num_videos",
+                    "n_comments", "average_token_length", "num_keywords",
+                    "kw_min_min", "kw_max_min", "kw_avg_min",
+                    "kw_min_max", "kw_max_max", "kw_avg_max",
+                    "kw_min_avg", "kw_max_avg", "kw_avg_avg",
+                    ]
+                )
+            ],
+            # add more modes here:
+            # "duplicates": self.drop_duplicate_rows,
+            # "lease": self.clean_lease_commence_date,
+            # "shares_pipeline": [
+            #     lambda df: self.drop_irrelevant_features(
+            #         df,
+            #         columns_to_drop=[
+            #             "self_reference_min_shares",
+            #             "self_reference_max_shares",
+            #             "self_reference_avg_shares",
+            #         ],
+            #     ),
+            #     lambda df: self.move_column_before(df=df, col_to_move="shares", before_col="id"),
+            # ],
+        }
+
+        # Build cleaning pipeline
+        if mode == "all":
+            # Flatten all pipelines in order
+            steps_to_run = [func for funcs in cleaning_steps.values() for func in funcs]
+        elif mode in cleaning_steps:
+            # Run selected function
+            steps_to_run = cleaning_steps[mode]
+        else:
+            raise ValueError(f"   └── ❌ Unsupported cleaning mode: '{mode}' - use 'all' or one of {list(cleaning_steps.keys())}")
+
+        # Run the selected steps
+        for step_func in steps_to_run:
+            df_cleaned = step_func(df_cleaned)
+
         elapsed_time = time.time() - start_time
-        print(f"   └── Cleaning completed in {elapsed_time:.2f} seconds")
-    
+        print(f"   └── Cleaning mode='{mode}' completed in {elapsed_time:.2f} seconds")
+
         return df_cleaned
     
     ########################################################################################################################################
@@ -108,7 +152,7 @@ class DataCleaner:
 
         if show:
             print("\n🫧 Cleaned DataFrame after applying snake_case to column names:")
-            display(df_copy.head())
+            display(df_copy.head(1))
 
         return df_copy
     
@@ -219,7 +263,7 @@ class DataCleaner:
 
         if show:
             print("\n🫧 Cleaned DataFrame after rearranging columns:")
-            display(df_reordered)
+            display(df_reordered.head(1))
 
         return df_reordered
     
@@ -267,8 +311,8 @@ class DataCleaner:
             print(f"   └── None of the specified columns exist in DataFrame. Nothing dropped.")
 
         if show:
-            print("\n🫧 Cleaned DataFrame after dropping irrelevant features:")
-            display(df_copy)
+            print("\n🫧 Cleaned DataFrame after dropping irrelevant features:\n")
+            display(df_copy.info())
 
         return df_copy
     

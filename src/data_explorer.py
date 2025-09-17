@@ -4,13 +4,17 @@
 
 import re
 import difflib
+import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
 import statsmodels.api as sm
 from scipy.stats import zscore
 from IPython.display import display
+import squarify
+from scipy.stats import chi2_contingency, pearsonr, spearmanr, pointbiserialr, f_oneway
 from typing import List
+from sklearn.linear_model import LinearRegression
 from rich import print as rprint
 
 class DataExplorer:
@@ -19,9 +23,9 @@ class DataExplorer:
     All analysis functions take a DataFrame as input.
     """
 
-    # -----------------------------
-    # Public Method
-    # -----------------------------
+    ###################################################################################################################################
+    ###################################################################################################################################
+    # 🔍 PERFORM UNIVARIATE ANALYSIS
     @staticmethod
     def perform_univariate_analysis(
         df: pd.DataFrame,
@@ -34,117 +38,258 @@ class DataExplorer:
         rare_threshold: float = 0.01,
         bins: int = 30
     ):
-        """Perform univariate analysis on a single column."""
+        """
+        Perform univariate analysis on a single feature (numerical or categorical) in a DataFrame.
+
+        This method automatically detects the feature type and calls the appropriate analysis:
+        - Numerical: Computes summary statistics, skewness, kurtosis, outlier detection, missing values, and plots.
+        - Categorical: Computes counts, percentages, frequency tables, warnings for high cardinality or rare categories, missing values, and plots.
+
+        Parameters
+        ----------
+        df : pd.DataFrame
+            The DataFrame containing the feature to analyze.
+        feature : str
+            The column name of the feature to analyze.
+        show_plots : bool, default=True
+            Whether to generate visualizations for the feature.
+        top_n_pie : int, default=5
+            For categorical features: number of top categories to display individually in the pie chart (remaining grouped as "Others").
+        skew_thresh : float, default=1.0
+            Threshold for skewness above which a warning is shown for numerical features.
+        kurt_thresh : float, default=3.0
+            Threshold for kurtosis above which a warning is shown for numerical features.
+        high_card_threshold : int, default=25
+            Threshold for high cardinality in categorical features to trigger a warning.
+        rare_threshold : float, default=0.01
+            Threshold for rare categories (fraction of total) in categorical features to trigger a warning.
+        bins : int, default=30
+            Number of bins to use for numerical feature histograms.
+
+        Returns
+        -------
+        None
+            Prints analysis results to the console and displays plots if `show_plots=True`.
+
+        Notes
+        -----
+        - Automatically selects the type of analysis based on the feature's data type.
+        - For numerical features, outlier detection uses either:
+            - IQR Method (1.5 × IQR) for skewed distributions, or
+            - Z-Score Method (|z| > 3) for near-normal distributions.
+        - Skewness and kurtosis warnings indicate when values exceed the specified thresholds.
+        - Categorical warnings include high cardinality, rare categories, constant values, and potential inconsistencies in capitalization or whitespace.
+        """
         if feature not in df.columns:
-            print(f"❌ Feature '{feature}' not found in the DataFrame.")
+            print(f"❌  Feature '{feature}' not found in the DataFrame.")
             return
 
         col_type = "categorical" if df[feature].dtype in ['object', 'category'] else "numerical"
         print(f"🔎 Univariate Analysis for '{feature}' (Type: {col_type})\n")
 
         if pd.api.types.is_numeric_dtype(df[feature]):
-            DataExplorer._analyze_numerical(
+            # Numerical feature
+            DataExplorer._analyse_num(
                 df, feature, show_plots, bins, skew_thresh, kurt_thresh
             )
         elif pd.api.types.is_categorical_dtype(df[feature]) or df[feature].dtype == 'object':
-            DataExplorer._analyze_categorical(
+            # Categorical feature
+            DataExplorer._analyse_cat(
                 df, feature, show_plots, top_n_pie, high_card_threshold, rare_threshold
             )
         else:
-            print(f"❌ '{feature}' is neither numerical nor categorical. Data type: {df[feature].dtype}")
+            print(f"❌  '{feature}' is neither numerical nor categorical. Data type: {df[feature].dtype}")
 
-    # -----------------------------
-    # Numerical Analysis Helpers
-    # -----------------------------
+    ###################################################################################################################################
+    ###################################################################################################################################
+    # 🔍 ANALYSE NUMERICAL
     @staticmethod
-    def _analyze_numerical(df, feature, show_plots, bins, skew_thresh, kurt_thresh):
-        DataExplorer._print_dtype_and_unique(df, feature)
-        DataExplorer._print_summary_stats(df, feature)
-        skew, kurt = DataExplorer._print_distribution_metrics(df, feature, skew_thresh, kurt_thresh)
-        DataExplorer._detect_outliers(df, feature, skew, kurt, skew_thresh, show_plots)
-        DataExplorer._print_missing_values(df, feature)
+    def _analyse_num(df, feature, show_plots, bins, skew_thresh, kurt_thresh):
+        """
+        Perform a comprehensive univariate analysis on a numerical feature.
 
-        if show_plots:
-            DataExplorer._plot_numerical(df, feature, bins)
+        This function provides an overview of a numerical column by:
+        1. Displaying data type and number of unique non-NA values.
+        2. Showing summary statistics (count, mean, std, min, quartiles, max).
+        3. Calculating skewness and kurtosis, with a warning if they exceed thresholds.
+        4. Detecting outliers using either:
+        - IQR Method (for skewed distributions), or
+        - Z-Score Method (for approximately normal distributions).
+        It also prints the method used and the corresponding bounds.
+        5. Reporting missing values and showing a sample of rows with missing data.
+        6. Optionally plotting visualizations:
+        - Histogram with KDE
+        - Boxplot
+        - Violin plot
+        - QQ plot for normality assessment
 
-    @staticmethod
-    def _print_dtype_and_unique(df, feature):
-        dtype = df[feature].dtype
-        unique_count = df[feature].dropna().nunique()
-        print(f"📘 Data Type: {dtype}")
-        print(f"💎 Unique Non-NA Values: {unique_count}")
+        Parameters
+        ----------
+        df : pd.DataFrame
+            The DataFrame containing the feature to analyze.
+        feature : str
+            The column name of the numerical feature to analyze.
+        show_plots : bool, default=True
+            Whether to generate visual plots for the feature.
+        bins : int, default=30
+            Number of bins to use for the histogram.
+        skew_thresh : float, default=1.0
+            Threshold for skewness above which a warning is displayed.
+        kurt_thresh : float, default=3.0
+            Threshold for kurtosis above which a warning is displayed.
 
-    @staticmethod
-    def _print_summary_stats(df, feature):
-        stats = df[feature].describe()
+        Returns
+        -------
+        None
+            Prints analysis results and shows plots if requested.
+
+        Notes
+        -----
+        - Outlier detection method is chosen automatically based on skewness and kurtosis:
+            - IQR method (1.5 × IQR) is used for skewed distributions.
+            - Z-Score method (|z| > 3) is used for near-normal distributions.
+        - Skewness and kurtosis warnings indicate values above the defined thresholds.
+        """
+
+        # Data type and unique values
+        feature_series = df[feature].dropna()
+        print(f"📘 Data Type: {feature_series.dtype}")
+        print(f"💎 Unique Non-NA: {feature_series.nunique()}")
+
+        # Summary statistics
+        stats = feature_series.describe()
         print("📊 Summary Statistics:")
         display(stats.to_frame().T.style.format("{:.2f}"))
 
-    @staticmethod
-    def _print_distribution_metrics(df, feature, skew_thresh, kurt_thresh):
-        skew = df[feature].skew()
-        kurt = df[feature].kurtosis()
-        print(f"📈 Skewness: {skew:.2f} {'⚠️' if abs(skew) > skew_thresh else ''}")
-        print(f"📈 Kurtosis: {kurt:.2f} {'⚠️' if kurt > kurt_thresh else ''}")
-        return skew, kurt
+        # Skewness and kurtosis
+        skew, kurt = feature_series.skew(), feature_series.kurtosis()
+        skew_msg = f"📈 Skewness: {skew:.2f}"
+        if abs(skew) > skew_thresh:
+            skew_msg += f" ⚠️ (> {skew_thresh})"
+        kurt_msg = f"📈 Kurtosis: {kurt:.2f}"
+        if kurt > kurt_thresh:
+            kurt_msg += f" ⚠️ (> {kurt_thresh})"
+        print(skew_msg)
+        print(kurt_msg)
 
-    @staticmethod
-    def _detect_outliers(df, feature, skew, kurt, skew_thresh, show_sample=False):
+        # Detect outliers
         if abs(skew) > skew_thresh or abs(kurt) > 2:
-            method = "IQR Method"
+            # Skewed distribution → IQR Method
+            method = "IQR Method (1.5 × IQR)"
             Q1, Q3 = df[feature].quantile([0.25, 0.75])
             IQR = Q3 - Q1
-            outliers = df[(df[feature] < Q1 - 1.5 * IQR) | (df[feature] > Q3 + 1.5 * IQR)]
+            lower_bound = Q1 - 1.5 * IQR
+            upper_bound = Q3 + 1.5 * IQR
+            outliers = df[(df[feature] < lower_bound) | (df[feature] > upper_bound)]
+            bounds_msg = f"   └── Bounds: [{lower_bound:.2f}, {upper_bound:.2f}]"
         else:
-            method = "Z-Score Method"
+            # Relatively normal distribution → Z-Score Method
+            method = "Z-Score Method (|z| > 3)"
             z_scores = zscore(df[feature].dropna())
             outliers = df[abs(z_scores) > 3]
+            mean = df[feature].mean()
+            std = df[feature].std()
+            lower_bound = mean - 3 * std
+            upper_bound = mean + 3 * std
+            bounds_msg = f"   └── Bounds: [{lower_bound:.2f}, {upper_bound:.2f}]"
 
         print(f"\n🔍 Outlier Detection: {method}")
+        print(bounds_msg)
         if outliers.empty:
             print("   └── ✅ No outliers detected.")
         else:
             print(f"   └── ⚠️ {len(outliers)} outliers found ({len(outliers)/len(df)*100:.2f}% of rows)")
-            if show_sample:
-                display(outliers[[feature]].head())
 
-    @staticmethod
-    def _print_missing_values(df, feature):
+        # Missing values
         missing_count = df[feature].isnull().sum()
         if missing_count == 0:
-            print("✅ No rows with missing values found.")
+            print("\n✅ No rows with missing values found.")
         else:
             total_rows = len(df)
-            print(f"⚠️ Missing values: {missing_count}/{total_rows} ({missing_count/total_rows*100:.2f}%)")
+            print(f"\n⚠️  Missing values: {missing_count}/{total_rows} ({missing_count/total_rows*100:.2f}%)")
             display(df[df[feature].isnull()].head())
 
-    @staticmethod
-    def _plot_numerical(df, feature, bins):
-        fig, axes = plt.subplots(2, 2, figsize=(16, 10))
-        sns.histplot(df[feature], bins=bins, kde=True, ax=axes[0, 0], color="#4C72B0")
-        axes[0, 0].set_title("Histogram + KDE")
-        sns.boxplot(y=df[feature], ax=axes[0, 1], color='#C44E52')
-        axes[0, 1].set_title("Boxplot")
-        sns.violinplot(y=df[feature], ax=axes[1, 0], color='#55A868')
-        axes[1, 0].set_title("Violin Plot")
-        sm.qqplot(df[feature].dropna(), line='s', ax=axes[1, 1], markerfacecolor='#FFA500', markeredgecolor='black')
-        axes[1, 1].set_title("QQ Plot")
-        plt.tight_layout()
-        plt.show()
+        # Plot visualizations
+        if show_plots:
+            fig, axes = plt.subplots(2, 2, figsize=(16, 10))
 
-    # -----------------------------
-    # Categorical Analysis Helpers
-    # -----------------------------
-    @staticmethod
-    def _analyze_categorical(df, feature, show_plots, top_n_pie, high_card_threshold, rare_threshold):
-        dtype = df[feature].dtype
-        unique_values = df[feature].dropna().unique()
-        print(f"📘 Data Type: {dtype}")
-        print(f"💎 Unique Non-NA Values: {len(unique_values)}")
-        print(f"📋 Unique Values List: {list(unique_values)}")
+            # Histogram
+            sns.histplot(df[feature], bins=bins, kde=True, ax=axes[0, 0], color="#4C72B0")
+            axes[0, 0].set_title("Histogram + KDE")
 
-        counts = df[feature].value_counts()
-        percentages = df[feature].value_counts(normalize=True) * 100
+            # Boxplot
+            sns.boxplot(y=df[feature], ax=axes[0, 1], color='#C44E52')
+            axes[0, 1].set_title("Boxplot")
+
+            # Violin plot
+            sns.violinplot(y=df[feature], ax=axes[1, 0], color='#55A868')
+            axes[1, 0].set_title("Violin Plot")
+
+            # QQ Plot
+            sm.qqplot(df[feature].dropna(), line='s', ax=axes[1, 1], markerfacecolor='#FFA500', markeredgecolor='black')
+            axes[1, 1].set_title("QQ Plot")
+
+            fig.suptitle(f"Univariate Analysis of '{feature}'", fontsize=16, y=1.02)
+            plt.tight_layout()
+            plt.show()
+
+    ###################################################################################################################################
+    ###################################################################################################################################
+    # 🔍 ANALYSE CATEGORICAL
+    @staticmethod
+    def _analyse_cat(
+        df: pd.DataFrame,
+        feature: str,
+        show_plots: bool = True,
+        top_n_pie: int = 5,
+        high_card_threshold: int = 25,
+        rare_threshold: float = 0.01
+    ):
+        """
+        Perform a comprehensive univariate analysis on a categorical feature.
+
+        This function provides an overview of a categorical column by:
+        1. Displaying data type and number of unique non-NA values.
+        2. Listing all unique values.
+        3. Showing a frequency table with counts and percentages.
+        4. Reporting warnings:
+            - Constant value
+            - High cardinality
+            - Rare categories
+            - Whitespace / capitalization issues
+        5. Reporting missing values and showing a sample of rows with missing data.
+        6. Optionally plotting visualizations:
+            - Countplot
+            - Pie chart for top categories
+
+        Parameters
+        ----------
+        df : pd.DataFrame
+            The DataFrame containing the feature to analyze.
+        feature : str
+            The column name of the categorical feature to analyze.
+        show_plots : bool, default=True
+            Whether to generate visual plots for the feature.
+        top_n_pie : int, default=5
+            Number of top categories to display individually in the pie chart; remaining grouped as "Others".
+        high_card_threshold : int, default=25
+            Threshold for high cardinality to trigger a warning.
+        rare_threshold : float, default=0.01
+            Threshold for rare categories (fraction of total) to trigger a warning.
+
+        Returns
+        -------
+        None
+            Prints analysis results and shows plots if requested.
+        """
+        feature_series = df[feature].dropna()
+        print(f"📘 Data Type: {feature_series.dtype}")
+        print(f"💎 Unique Non-NA Values: {feature_series.nunique()}")
+        print(f"📋 Unique Values List: {list(feature_series.unique())}")
+
+        # Frequency table
+        counts = feature_series.value_counts()
+        percentages = feature_series.value_counts(normalize=True) * 100
         freq_table = pd.DataFrame({
             'Count': counts.apply(lambda x: f"{x:,}"),
             'Percentage (%)': percentages.round(2)
@@ -153,58 +298,290 @@ class DataExplorer:
         print("📊 Frequency Table:")
         display(freq_table)
 
-        DataExplorer._categorical_warnings(df, feature, counts, unique_values, high_card_threshold, rare_threshold)
+        # Warnings
+        if feature_series.nunique() == 1:
+            print(f"⚠️  Constant Value: Feature is constant with value: {feature_series.unique()[0]}")
+        elif feature_series.nunique() > high_card_threshold:
+            print(f"⚠️  High Cardinality (>{high_card_threshold}): {feature_series.nunique()} unique categories")
 
-        if show_plots:
-            DataExplorer._plot_categorical(df, feature, counts, top_n_pie)
+        rare_cats = (counts / counts.sum() < rare_threshold)
+        if rare_cats.any():
+            print(f"⚠️  Rare Categories (<{rare_threshold*100:.0f}%): {rare_cats.sum()} found")
 
-    @staticmethod
-    def _categorical_warnings(df, feature, counts, unique_values, high_card_threshold, rare_threshold):
-        if len(unique_values) == 1:
-            print(f"⚠️ Constant Value: Feature is constant with value: {unique_values[0]}")
-        elif len(unique_values) > high_card_threshold:
-            print(f"⚠️ High Cardinality (>{high_card_threshold}): {len(unique_values)} unique categories")
+        stripped = feature_series.astype(str).str.strip()
+        if not feature_series.astype(str).equals(stripped):
+            print("⚠️  Detected leading/trailing whitespace.")
+        lowercase = feature_series.astype(str).str.lower()
+        if lowercase.nunique() < feature_series.nunique():
+            print("⚠️  Potential inconsistent capitalization.")
 
-        percentages = counts / counts.sum() * 100
-        rare_cats = percentages[percentages < (rare_threshold * 100)]
-        if not rare_cats.empty:
-            print(f"⚠️ Rare Categories (<{rare_threshold*100:.0f}%): {len(rare_cats)} found")
-
-        # Whitespace / capitalization issues
-        stripped = df[feature].astype(str).str.strip()
-        if not df[feature].astype(str).equals(stripped):
-            print("⚠️ Detected leading/trailing whitespace.")
-        lowercase = df[feature].astype(str).str.lower()
-        if len(lowercase.unique()) < len(df[feature].astype(str).unique()):
-            print("⚠️ Potential inconsistent capitalization.")
-
-        DataExplorer._print_missing_values(df, feature)
-
-    @staticmethod
-    def _plot_categorical(df, feature, counts, top_n_pie):
-        fig, axes = plt.subplots(1, 2, figsize=(16, 6), gridspec_kw={'width_ratios': [2, 1]})
-        sns.countplot(data=df, x=feature, order=counts.index, ax=axes[0])
-        axes[0].set_title("Countplot")
-        axes[0].tick_params(axis='x', rotation=45)
-
-        # Pie chart
-        if len(counts) > top_n_pie:
-            top_n = counts[:top_n_pie]
-            others = pd.Series(counts[top_n_pie:].sum(), index=["Others"])
-            pie_data = pd.concat([top_n, others])
+        # Missing values
+        missing_count = df[feature].isnull().sum()
+        if missing_count == 0:
+            print("\n✅ No rows with missing values found.")
         else:
-            pie_data = counts
+            total_rows = len(df)
+            print(f"\n⚠️  Missing values: {missing_count}/{total_rows} ({missing_count/total_rows*100:.2f}%)")
+            display(df[df[feature].isnull()].head())
 
-        axes[1].pie(
-            pie_data,
-            labels=pie_data.index,
-            autopct=lambda pct: f'{pct:.1f}%\n({int(pct/100 * pie_data.sum())})',
-            startangle=90
-        )
-        axes[1].set_title("Pie Chart")
-        plt.tight_layout()
-        plt.show()
+        # Plots
+        if show_plots:
+            fig, axes = plt.subplots(1, 2, figsize=(16, 6), gridspec_kw={'width_ratios': [2, 1]})
 
+            # Countplot
+            sns.countplot(data=df, x=feature, order=counts.index, ax=axes[0])
+            axes[0].set_title("Countplot")
+            axes[0].tick_params(axis='x', rotation=45)
+
+            # Pie chart
+            if len(counts) > top_n_pie:
+                top_n = counts[:top_n_pie]
+                others = pd.Series(counts[top_n_pie:].sum(), index=["Others"])
+                pie_data = pd.concat([top_n, others])
+            else:
+                pie_data = counts
+
+            axes[1].pie(
+                pie_data,
+                labels=pie_data.index,
+                autopct=lambda pct: f'{pct:.1f}%\n({int(pct/100 * pie_data.sum())})',
+                startangle=90
+            )
+            axes[1].set_title("Pie Chart")
+
+            fig.suptitle(f"Univariate Analysis of '{feature}'", fontsize=16, y=1.02)
+            plt.tight_layout()
+            plt.show()
+    
+    ###################################################################################################################################
+    ###################################################################################################################################
+    # 🔍 PERFORM BIVARIATE ANALYSIS
+    @staticmethod
+    def perform_bivariate_analysis(df: pd.DataFrame, col1: str, col2: str, show_plots: bool = True):
+        """
+        Determine column types and delegate to appropriate analysis method.
+        """
+        if col1 not in df.columns:
+            print(f"❌ Column '{col1}' not found in the DataFrame.")
+            return
+        if col2 not in df.columns:
+            print(f"❌ Column '{col2}' not found in the DataFrame.")
+            return
+
+        col1_type = "categorical" if df[col1].dtype in ['object', 'category'] else "numerical"
+        col2_type = "categorical" if df[col2].dtype in ['object', 'category'] else "numerical"
+        print(f"🔎 Bivariate Analysis: '{col1}' ({col1_type}) vs. '{col2}' ({col2_type})\n")
+
+        if col1_type == "numerical" and col2_type == "numerical":
+            DataExplorer._analyse_num_num(df, col1, col2, show_plots)
+        elif (col1_type == "numerical" and col2_type == "categorical") or (col1_type == "categorical" and col2_type == "numerical"):
+            DataExplorer._analyse_num_cat(df, col1, col2, show_plots)
+        elif col1_type == "categorical" and col2_type == "categorical":
+            DataExplorer._analyse_cat_cat(df, col1, col2, show_plots)
+        else:
+            print(f"❌  Cannot analyze combination: {col1_type} & {col2_type}")
+
+
+    ###################################################################################################################################
+    ###################################################################################################################################
+    # 🔍 NUMERICAL x NUMERICAL ANALYSIS
+    @staticmethod
+    def _analyse_num_num(df, col1, col2, show_plots):
+        pair_df = df[[col1, col2]].dropna()
+
+        # Pearson Correlation
+        pearson_corr, pearson_p = pearsonr(pair_df[col1], pair_df[col2])
+        print(f"🧪 Pearson Correlation: {pearson_corr:.2f}, p-value: {pearson_p:.4f}")
+        if pearson_p < 0.05:
+            if pearson_corr < -0.7:
+                print("   └── ⚠️ Significant correlation with very strong negative effect.")
+            elif pearson_corr < -0.5:
+                print("   └── ⚠️ Significant correlation with strong negative effect.")
+            elif pearson_corr < -0.3:
+                print("   └── ⚠️ Significant correlation with moderate negative effect.")
+            elif pearson_corr < 0.3:
+                print("   └── Significant correlation with weak effect.")
+            elif pearson_corr < 0.5:
+                print("   └── ⚠️ Significant correlation with moderate positive effect.")
+            elif pearson_corr < 0.7:
+                print("   └── ⚠️ Significant correlation with strong positive effect.")
+            else:
+                print("   └── ⚠️ Significant correlation with very strong positive effect.")
+        else:
+            print("   └── No significant linear correlation (Pearson).")
+
+        # Spearman Correlation
+        spearman_corr, spearman_p = spearmanr(pair_df[col1], pair_df[col2])
+        print(f"\n🧪 Spearman Correlation: {spearman_corr:.2f}, p-value: {spearman_p:.4f}")
+        if spearman_p < 0.05:
+            if spearman_corr < -0.7:
+                print("   └── ⚠️ Significant monotonic correlation with very strong negative effect.")
+            elif spearman_corr < -0.5:
+                print("   └── ⚠️ Significant monotonic correlation with strong negative effect.")
+            elif spearman_corr < -0.3:
+                print("   └── ⚠️ Significant monotonic correlation with moderate negative effect.")
+            elif spearman_corr < 0.3:
+                print("   └── Significant monotonic correlation with weak effect.")
+            elif spearman_corr < 0.5:
+                print("   └── ⚠️ Significant monotonic correlation with moderate positive effect.")
+            elif spearman_corr < 0.7:
+                print("   └── ⚠️ Significant monotonic correlation with strong positive effect.")
+            else:
+                print("   └── ⚠️ Significant monotonic correlation with very strong positive effect.")
+        else:
+            print("   └── No significant monotonic correlation (Spearman).")
+
+        # Plots
+        if show_plots:
+            fig, axes = plt.subplots(2, 2, figsize=(14, 8))
+            # Scatter + regression
+            sns.regplot(data=pair_df, x=col1, y=col2, scatter_kws={'alpha':0.6, 'color':'#4A90E2'}, line_kws={'color':'#E94E77'}, ax=axes[0,0])
+            axes[0,0].set_title("Scatter Plot with Regression Line")
+            # Hexbin
+            axes[0,1].hexbin(pair_df[col1], pair_df[col2], gridsize=30, cmap='viridis')
+            axes[0,1].set_title("Hexbin Plot: Density")
+            # Correlation heatmap
+            sns.heatmap(pair_df[[col1,col2]].corr(), annot=True, fmt=".2f", cmap="coolwarm", cbar=False, ax=axes[1,0])
+            axes[1,0].set_title("Correlation Heatmap")
+            # Residual plot
+            model = LinearRegression().fit(pair_df[[col1]], pair_df[col2])
+            residuals = pair_df[col2] - model.predict(pair_df[[col1]])
+            sns.scatterplot(x=model.predict(pair_df[[col1]]), y=residuals, ax=axes[1,1], alpha=0.6, color='#50E3C2')
+            axes[1,1].axhline(0, color='red', linestyle='--', linewidth=1)
+            axes[1,1].set_title("Residual Plot")
+            axes[1,1].set_xlabel("Predicted Values")
+            axes[1,1].set_ylabel("Residuals")
+
+            fig.suptitle(f"Bivariate Analysis of '{col1}' and '{col2}'", fontsize=16, y=1.02)
+            plt.tight_layout()
+            plt.show()
+
+    ###################################################################################################################################
+    ###################################################################################################################################
+    # 🔍 NUMERICAL x CATEGORICAL ANALYSIS
+    @staticmethod
+    def _analyse_num_cat(df, col1, col2, show_plots):
+        # Assign numerical & categorical
+        if pd.api.types.is_numeric_dtype(df[col1]):
+            num_col, cat_col = col1, col2
+        else:
+            num_col, cat_col = col2, col1
+
+        pair_df = df[[num_col, cat_col]].dropna()
+
+        # Summarize numeric by category
+        print("📑 Summary Statistics by Category:")
+        grouped = pair_df.groupby(cat_col)[num_col].agg(['mean','median','std']).reset_index()
+        grouped[['mean', 'median', 'std']] = grouped[['mean', 'median', 'std']].astype(float)
+        display(grouped.style.format({
+            'mean': '{:,.2f}',
+            'median': '{:,.2f}',
+            'std': '{:,.2f}'
+        }))
+
+        # Statistical Tests
+        if pair_df[cat_col].nunique() == 2:
+            r_val, p_val = pointbiserialr(pair_df[cat_col].astype('category').cat.codes, pair_df[num_col])
+            print(f"🧪 Point-biserial correlation: {r_val:.2f}, p-value: {p_val:.4f}")
+            if p_val < 0.05:
+                effect = abs(r_val)
+                if effect > 0.7:
+                    print("   └── ⚠️ Significant correlation with very strong effect.")
+                elif effect > 0.5:
+                    print("   └── ⚠️ Significant correlation with strong effect.")
+                elif effect > 0.3:
+                    print("   └── ⚠️ Significant correlation with moderate effect.")
+                else:
+                    print("   └── Significant correlation with weak effect.")
+            else:
+                print("   └── No significant correlation.")
+        else:
+            groups = [g[num_col].values for _, g in pair_df.groupby(cat_col)]
+            f_stat, p_val = f_oneway(*groups)
+            print(f"🧪 ANOVA F-statistic: {f_stat:.2f}, p-value: {p_val:.4f}")
+            if p_val < 0.05:
+                if f_stat > 10:
+                    print("   └── ⚠️ Significant differences with very strong evidence.")
+                elif f_stat > 5:
+                    print("   └── ⚠️ Significant differences with strong evidence.")
+                elif f_stat > 2:
+                    print("   └── ⚠️ Significant differences with moderate evidence.")
+                else:
+                    print("   └── Significant differences with weak evidence.")
+            else:
+                print("   └── No significant differences across categories.")
+
+        # Plots
+        if show_plots:
+            fig, axes = plt.subplots(2,2,figsize=(14,8))
+            sns.boxplot(data=pair_df, x=cat_col, y=num_col, hue=cat_col, ax=axes[0,0], palette='viridis', dodge=False, legend=False)
+            axes[0,0].set_title("Boxplot")
+            sns.violinplot(data=pair_df, x=cat_col, y=num_col, hue=cat_col, ax=axes[0,1], palette='viridis', dodge=False, legend=False)
+            axes[0,1].set_title("Violin Plot")
+            sns.barplot(data=grouped, x=cat_col, y='mean', hue=cat_col, ax=axes[1,0], palette='viridis', dodge=False, legend=False)
+            axes[1,0].set_title("Bar Plot of Means")
+            sns.stripplot(data=pair_df, x=cat_col, y=num_col, ax=axes[1,1], color='green', jitter=True, alpha=0.6)
+            axes[1,1].set_title("Scatter Plot with Jitter")
+
+            fig.suptitle(f"Bivariate Analysis of '{col1}' and '{col2}'", fontsize=16, y=1.02)
+            plt.tight_layout()
+            plt.show()
+
+    ###################################################################################################################################
+    ###################################################################################################################################
+    # 🔍 CATEGORICAL x CATEGORICAL ANALYSIS
+    @staticmethod
+    def _analyse_cat_cat(df, col1, col2, show_plots):
+        pair_df = df[[col1, col2]].dropna()
+        crosstab_raw = pd.crosstab(pair_df[col1], pair_df[col2])
+        crosstab_prop = pd.crosstab(pair_df[col1], pair_df[col2], normalize='index')
+
+        # Chi-square test
+        chi2, p, _, _ = chi2_contingency(crosstab_raw)
+        print(f"🧪 Chi2 Statistic: {chi2:.2f}, p-value: {p:.4f}")
+        n, r, c = pair_df.shape[0], crosstab_raw.shape[0], crosstab_raw.shape[1]
+        cramers_v = np.sqrt(chi2 / (n * min(r-1,c-1)))
+        print(f"🧪 Cramér's V: {cramers_v:.2f}")
+        if p < 0.05:
+            if cramers_v > 0.5:
+                print("   └── ⚠️  Significant association with very strong effect.")
+            elif cramers_v > 0.3:
+                print("   └── ⚠️  Significant association with strong effect.")
+            elif cramers_v > 0.1:
+                print("   └── ⚠️  Significant association with moderate effect.")
+            else:
+                print("   └── Significant association with weak effect.")
+        else:
+            print("   └── ⚠️  No significant association.")
+
+        # Plots
+        if show_plots:
+            fig, axes = plt.subplots(2,2,figsize=(14,8))
+            sns.countplot(data=pair_df, x=col1, hue=col2, palette='tab10', ax=axes[0,0])
+            axes[0,0].set_title("Countplot with Hue")
+            # Treemap
+            proportions = pair_df.groupby([col1,col2]).size().reset_index(name='counts')
+            proportions['proportion'] = proportions['counts']/proportions['counts'].sum()
+            axes[0,1].axis('off')
+            squarify.plot(sizes=proportions['proportion'], label=proportions.apply(lambda x:f"{x[col1]}-{x[col2]}",axis=1), alpha=0.8, ax=axes[0,1])
+            axes[0,1].set_title("Treemap")
+            # Heatmap
+            counts_str = crosstab_raw.apply(lambda col: col.map('{:,}'.format))
+            percent_str = (crosstab_prop*100).round(1).astype(str)+'%'
+            annot = counts_str + "\n(" + percent_str + ")"
+            sns.heatmap(crosstab_prop, annot=annot, fmt='', cmap='coolwarm', cbar=False, ax=axes[1,0])
+            axes[1,0].set_title("Heatmap")
+            # Stacked bar chart
+            crosstab_prop.plot(kind='bar', stacked=True, colormap='tab20', ax=axes[1,1])
+            axes[1,1].set_title("Stacked Bar Chart")
+
+            fig.suptitle(f"Bivariate Analysis of '{col1}' and '{col2}'", fontsize=16, y=1.02)
+            plt.tight_layout()
+            plt.show()
+
+    ###################################################################################################################################
+    ###################################################################################################################################
+    # 🔍 COMPARE DATAFRAMES
     @staticmethod
     def compare_dataframes(
         df_before: pd.DataFrame,
