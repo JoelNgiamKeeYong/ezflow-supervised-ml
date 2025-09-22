@@ -25,3 +25,10 @@ By leveraging the data and predictive models, this project ultimately supports A
 
 1. Update file path in config + target + indentifier column, if any
 2. Run the `basic_exploration.ipynb` notebook
+
+Aspect Description
+Problem Statement Classify patients as high-risk or low-risk for hospital readmission based on medical history and social determinants of health.
+Domain Tabular
+Approach Classification
+Features 1. Age: The age of the patient. 2. Gender: The gender of the patient. 3. Number of Previous Admissions: The total number of times the patient has been admitted to the hospital before. 4. Length of Stay: The duration of the patient's last hospital stay. 5. Comorbidities: The number of comorbid conditions the patient has. 6. Medication Adherence: A score representing how well the patient follows their medication regimen. 7. Socioeconomic Status: A measure of the patient's economic and social position relative to others. 8. Smoking Status: Whether the patient is a smoker or non-smoker.
+Dependent Variable \*Risk Category: The classification of the patient as high-risk or low-risk for hospital readmission.

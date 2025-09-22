@@ -10,7 +10,6 @@ from typing import Any, Dict, List, Optional, Union
 # Related third-party imports
 import pandas as pd
 from IPython.display import display 
-from rich import print as rprint
 
 class DataCleaner:
     """
@@ -58,34 +57,40 @@ class DataCleaner:
             "snake_case_columns": [
                 lambda df: self.convert_column_names_to_snake_case(df=df)
             ],
-            "rearrange_columns": [
-                lambda df: self.move_column_before(df=df, col_to_move="shares", before_col="id")
-            ],
-            "irrelevant": [
-                lambda df: self.drop_irrelevant_features(df=df, columns_to_drop=[
-                    "id", "url", "n_non_stop_words", "n_non_stop_unique_tokens",
-                    "num_hrefs", "num_self_hrefs", "num_imgs", "num_videos",
-                    "n_comments", "average_token_length", "num_keywords",
-                    "kw_min_min", "kw_max_min", "kw_avg_min",
-                    "kw_min_max", "kw_max_max", "kw_avg_max",
-                    "kw_min_avg", "kw_max_avg", "kw_avg_avg",
-                    ]
-                )
-            ],
-            # add more modes here:
-            # "duplicates": self.drop_duplicate_rows,
-            # "lease": self.clean_lease_commence_date,
-            # "shares_pipeline": [
-            #     lambda df: self.drop_irrelevant_features(
-            #         df,
-            #         columns_to_drop=[
-            #             "self_reference_min_shares",
-            #             "self_reference_max_shares",
-            #             "self_reference_avg_shares",
-            #         ],
-            #     ),
-            #     lambda df: self.move_column_before(df=df, col_to_move="shares", before_col="id"),
+            # "rearrange_columns": [
+            #     lambda df: self.move_column_before(df=df, col_to_move="shares", before_col="id")
             # ],
+            "irrelevant": [
+                lambda df: self.drop_irrelevant_features(df=df, columns_to_drop=["unnamed_0"])
+            ],
+            "clean_target": [
+                lambda df: self.drop_missing_values(df=df, columns=["risk_category"]),
+                lambda df: self.map_values(df=df, mapping_dict={"risk_category": {"Low-risk": 0, "High-risk": 1}})
+            ],
+            "clean_age": [
+                lambda df: self.drop_missing_values(df=df, columns=["age"]),
+                lambda df: self.remove_out_of_range(df=df, column="age", min_value=0, max_value=105)
+            ],
+            "clean_gender": [
+                lambda df: self.drop_missing_values(df=df, columns=['gender'])
+            ],
+            "clean_comorbidities": [
+                lambda df: self.drop_missing_values(df=df, columns=["comorbidities"]),
+                lambda df: self.remove_out_of_range(df=df, column="comorbidities", min_value=0, max_value=20)
+            ],
+            "clean_length_of_stay": [
+                lambda df: self.drop_missing_values(df=df, columns=["length_of_stay"]),
+                lambda df: self.replace_character(df=df, columns=["length_of_stay"], to_replace=" days", replacement=""),
+                lambda df: self.convert_columns_dtype(df=df, columns_types={"length_of_stay": int})
+            ],
+            "clean_medication_adherence": [
+                lambda df: self.drop_missing_values(df=df, columns=["medication_adherence"]),
+                lambda df: self.map_values(df=df, mapping_dict={"medication_adherence": {"Mediu": "Medium", "Lo": "Low", "Hig": "High"}})
+            ],
+            "clean_number_of_previous_admissions": [
+                lambda df: self.drop_missing_values(df=df, columns=["number_of_previous_admissions"]),
+                lambda df: self.remove_out_of_range(df=df, column="number_of_previous_admissions", min_value=0, max_value=15)
+            ],
         }
 
         # Build cleaning pipeline
@@ -115,7 +120,7 @@ class DataCleaner:
     ########################################################################################################################################
     # 🧼 CONVERT COLUMN NAMES TO SNAKE CASE
     @staticmethod
-    def convert_column_names_to_snake_case(df: pd.DataFrame, show: bool = False) -> pd.DataFrame:
+    def convert_column_names_to_snake_case(df: pd.DataFrame, show: bool = False, verbose: int = 1) -> pd.DataFrame:
         """
         Convert all column names in a DataFrame to snake_case.
         
@@ -138,7 +143,8 @@ class DataCleaner:
         pd.DataFrame
             A new DataFrame with snake_case column names.
         """
-        print("   └── Converting column names to snake_case...")
+        if verbose == 0:
+            print("   └── Converting column names to snake_case...")
 
         def to_snake_case(text: str) -> str:
             text = text.lower().strip()
@@ -158,7 +164,7 @@ class DataCleaner:
     
     ########################################################################################################################################
     ########################################################################################################################################
-    # 🧼 CONVERT COLUMN NAMES TO SNAKE CASE
+    # 🧼 CONVERT COLUMNS DATA TYPE
     @staticmethod
     def convert_columns_dtype(df: pd.DataFrame, columns_types: Dict[str, Any], show: bool = False) -> pd.DataFrame:
         """
@@ -416,13 +422,66 @@ class DataCleaner:
 
     ########################################################################################################################################
     ########################################################################################################################################
+    # 🧼 DROP MISSING VALUES
+    @staticmethod
+    def drop_missing_values(df: pd.DataFrame, columns: list, show: bool = False) -> pd.DataFrame:
+        """
+        Drops rows with missing values in the specified columns.
+
+        Parameters
+        ----------
+        df : pd.DataFrame
+            The input DataFrame.
+        columns : list
+            List of column names to check for missing values. 
+            Rows with NaNs in any of these columns will be dropped.
+        show : bool, optional
+            If True, displays the number of rows removed and remaining rows, by default False.
+
+        Returns
+        -------
+        pd.DataFrame
+            A new DataFrame with rows containing missing values removed.
+        """
+        df_copy = df.copy()
+
+        if not columns:
+            print("   └── No columns specified. Nothing dropped.")
+            return df_copy
+
+        missing_cols = [col for col in columns if col in df_copy.columns]
+
+        if not missing_cols:
+            print("   └── None of the specified columns exist in DataFrame. Nothing dropped.")
+            return df_copy
+
+        before_count = len(df_copy)
+        df_copy = df_copy.dropna(subset=missing_cols)
+        after_count = len(df_copy)
+        dropped_count = before_count - after_count
+        dropped_pct = (dropped_count / before_count * 100) if before_count > 0 else 0
+
+        if dropped_count > 0:
+            cols_str = ", ".join(missing_cols)
+            print(f"   └── Dropped {dropped_count:,} rows ({dropped_pct:.2f}%) with missing values in column(s): {cols_str}")
+        else:
+            print(f"   └── No missing values found in specified column(s). Nothing dropped.")
+
+        if show:
+            print("\n🫧 Cleaned DataFrame after dropping missing values:\n")
+            display(df_copy.info())
+
+        return df_copy
+
+    ########################################################################################################################################
+    ########################################################################################################################################
     # 🧼 MARK MISSING VALUES
     @staticmethod
     def mark_missing_values(
         df: pd.DataFrame,
         numerical_columns: List[str] = [],
         categorical_columns: List[str] = [],
-        numerical_placeholder: Union[int, float] = 999,
+        numerical_placeholder: Union[int, float] = -1,
         categorical_placeholder: str = 'missing',
         show: bool = False
     ) -> pd.DataFrame:
@@ -437,7 +496,7 @@ class DataCleaner:
             Numerical columns to impute.
         categorical_columns : list of str, optional
             Categorical columns to impute.
-        numerical_placeholder : int or float, default=999
+        numerical_placeholder : int or float, default=-1
             Value to replace missing numerical data.
         categorical_placeholder : str, default='missing'
             Value to replace missing categorical data.
@@ -500,6 +559,55 @@ class DataCleaner:
     ########################################################################################################################################
     ########################################################################################################################################
     # 🧼 HANDLING NUMERICAL ISSUES
+
+    ########################################################################################################################################
+    ########################################################################################################################################
+    # 🧼 REMOVE OUT OF RANGE
+    @staticmethod
+    def remove_out_of_range(df: pd.DataFrame, column: str, min_value: Optional[float] = None, max_value: Optional[float] = None, show: bool = False) -> pd.DataFrame:
+        """
+        Remove rows where a column's values fall outside a specified range.
+
+        Parameters
+        ----------
+        df : pd.DataFrame
+            Input DataFrame.
+        column : str
+            The column to check for out-of-range values.
+        min_value : float, optional
+            Minimum allowed value. Rows below this will be removed.
+        max_value : float, optional
+            Maximum allowed value. Rows above this will be removed.
+        show : bool, optional
+            If True, displays the removed rows, by default False.
+
+        Returns
+        -------
+        pd.DataFrame
+            A new DataFrame with out-of-range rows removed.
+        """
+        df_copy = df.copy()
+        
+        # Boolean mask for out-of-range values
+        mask = pd.Series(False, index=df_copy.index)
+        if min_value is not None:
+            mask |= df_copy[column] < min_value
+        if max_value is not None:
+            mask |= df_copy[column] > max_value
+        
+        out_of_range_rows = df_copy[mask]
+        
+        if out_of_range_rows.empty:
+            print(f"   └── ⚠️ No out-of-range values found in '{column}'. Nothing removed.")
+        else:
+            print(f"   └── Removed {len(out_of_range_rows)} out-of-range rows in '{column}'.")
+            if show:
+                display(out_of_range_rows)
+        
+        # Remove out-of-range rows
+        df_copy = df_copy[~mask].copy()
+        
+        return df_copy
 
     ########################################################################################################################################
     ########################################################################################################################################

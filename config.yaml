@@ -10,22 +10,33 @@ random_state: 42
 #######################################################################################################################################
 #######################################################################################################################################
 # 📁 FILE PATHS
-data_file_path: "data/mini_project_1_data.csv"
+data_file_path: "data/data.csv"
 model_dir: "models"
 output_dir: "output"
 
 #######################################################################################################################################
 #######################################################################################################################################
 # 🎯 TASK DEFINITIONS
-task_type: "regression"
+task_type: "classification"
 debug: false
 debug_task_type: "classification"
 
 #######################################################################################################################################
 #######################################################################################################################################
 # 🧾 DATA DEFINITIONS
-identifier_column: "ID"
-target_column: "shares"
+identifier_column: "Unnamed: 0"
+target_column: "Risk_Category"
+features:
+  {
+    "Age": "The age of the patient.",
+    "Gender": "The gender of the patient.",
+    "Number of Previous Admissions": "The total number of times the patient has been admitted to the hospital before.",
+    "Length of Stay": "The duration of the patient's last hospital stay.",
+    "Comorbidities": "The number of comorbid conditions the patient has.",
+    "Medication Adherence": "A score representing how well the patient follows their medication regimen.",
+    "Socioeconomic Status": "A measure of the patient's economic and social position relative to others.",
+    "Smoking Status": "Whether the patient is a smoker or non-smoker.",
+  }
 
 #######################################################################################################################################
 #######################################################################################################################################

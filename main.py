@@ -66,7 +66,7 @@ def main():
     # Split dataset into training and test sets
     X_train, X_test, y_train, y_test = data_preprocessor.split_dataset(
         df=df_cleaned,
-        target=config["target_column"] if not config["debug"] else "target",
+        target=data_cleaner.convert_column_names_to_snake_case(df[[config["target_column"]]]).columns[0] if not config["debug"] else "target",
         test_size=config["test_size"],
         stratify=config["stratify"] if not config["debug"] else (True if config["debug_type"] == "classification" else False),
         random_state=config["random_state"],
