@@ -226,6 +226,70 @@ class DataCleaner:
     
     ########################################################################################################################################
     ########################################################################################################################################
+    # 🧼 CONVERT COLUMNS BY DATA TYPE
+    @staticmethod
+    def convert_columns_by_dtype(
+        df: pd.DataFrame,
+        source_dtype: str,
+        target_dtype: str,
+        show: bool = False
+    ) -> pd.DataFrame:
+        """
+        Convert all columns of a specified source data type to a target data type.
+
+        Parameters
+        ----------
+        df : pd.DataFrame
+            Input DataFrame to convert.
+        source_dtype : str
+            The data type of columns to convert (e.g., 'object', 'int', 'float').
+        target_dtype : str
+            The target data type (e.g., 'category', 'string', 'numeric', 'datetime').
+        show : bool, optional
+            If True, displays which columns were converted and their new dtypes, by default False.
+
+        Returns
+        -------
+        pd.DataFrame
+            A new DataFrame with converted columns.
+        """
+        print(f"   └── Converting all '{source_dtype}' columns to '{target_dtype}'...")
+
+        df_copy = df.copy()
+        converted_columns = []
+
+        # Identify columns with the source dtype
+        cols_to_convert = df_copy.select_dtypes(include=[source_dtype]).columns.tolist()
+
+        if not cols_to_convert:
+            print(f"   └── ⚠️ No columns of type '{source_dtype}' found.")
+            return df_copy
+
+        for col in cols_to_convert:
+            try:
+                print(f"       └── Converting '{col}' to '{target_dtype}'")
+                if target_dtype == 'numeric':
+                    df_copy[col] = pd.to_numeric(df_copy[col], errors='coerce')
+                elif target_dtype == 'category':
+                    df_copy[col] = df_copy[col].astype('category')
+                elif target_dtype == 'string':
+                    df_copy[col] = df_copy[col].astype('string')
+                elif target_dtype == 'datetime':
+                    df_copy[col] = pd.to_datetime(df_copy[col], errors='coerce')
+                else:
+                    df_copy[col] = df_copy[col].astype(target_dtype)
+                converted_columns.append(col)
+            except Exception as e:
+                print(f"       └── ⚠️ Could not convert '{col}': {e}")
+
+        if show and converted_columns:
+            print("\n🫧 Converted columns and their new dtypes:")
+            display(df_copy[converted_columns].dtypes)
+
+        return df_copy
+    
+    ########################################################################################################################################
+    ########################################################################################################################################
     # 🧼 MOVE COLUMN BEFORE
     @staticmethod
     def move_column_before(df: pd.DataFrame, col_to_move: str, before_col: str, show: bool = False) -> pd.DataFrame:
@@ -423,18 +487,18 @@ class DataCleaner:
     ########################################################################################################################################
     ########################################################################################################################################
     # 🧼 DROP MISSING VALUES
-    @staticmethod
-    def drop_missing_values(df: pd.DataFrame, columns: list, show: bool = False) -> pd.DataFrame:
+    def drop_missing_values(df: pd.DataFrame, columns: list = None, show: bool = False) -> pd.DataFrame:
         """
         Drops rows with missing values in the specified columns.
+        If no columns are specified, drops rows with missing values in ANY column.
 
         Parameters
         ----------
         df : pd.DataFrame
             The input DataFrame.
-        columns : list
+        columns : list, optional
             List of column names to check for missing values. 
-            Rows with NaNs in any of these columns will be dropped.
+            If None or empty, rows with NaNs in any column will be dropped.
         show : bool, optional
             If True, displays the number of rows removed and remaining rows, by default False.
 
@@ -445,12 +509,27 @@ class DataCleaner:
         """
         df_copy = df.copy()
 
+        # If no columns specified → drop across all columns
         if not columns:
-            print("   └── No columns specified. Nothing dropped.")
+            before_count = len(df_copy)
+            df_copy = df_copy.dropna()
+            after_count = len(df_copy)
+            dropped_count = before_count - after_count
+            dropped_pct = (dropped_count / before_count * 100) if before_count > 0 else 0
+
+            if dropped_count > 0:
+                print(f"   └── Dropped {dropped_count:,} rows ({dropped_pct:.2f}%) with missing values in ANY column.")
+            else:
+                print("   └── No missing values found in DataFrame. Nothing dropped.")
+
+            if show:
+                print("\n🫧 Cleaned DataFrame after dropping missing values:\n")
+                display(df_copy.info())
+
             return df_copy
 
+        # If columns are specified
         missing_cols = [col for col in columns if col in df_copy.columns]
-
         if not missing_cols:
             print("   └── None of the specified columns exist in DataFrame. Nothing dropped.")
             return df_copy
@@ -682,10 +761,14 @@ class DataCleaner:
     def map_values(
         df: pd.DataFrame,
         mapping_dict: Dict[str, Dict],
+        new_col: Optional[str] = None,
+        default: Optional[str] = None,
         show: bool = False
     ) -> pd.DataFrame:
         """
         Map values in specified columns according to provided mapping dictionaries.
+        Optionally, create a new column instead of overwriting, and assign a default
+        value to any unmapped categories.
 
         Parameters
         ----------
@@ -693,8 +776,13 @@ class DataCleaner:
             Input DataFrame.
         mapping_dict : dict
             Dictionary of {column: {old_value: new_value}} mappings.
+        new_col : str, optional
+            If provided, creates a new column instead of overwriting the original.
+        default : str, optional
+            If provided, assigns this value to any unmapped categories.
         show : bool, optional
-            If True, displays summary of value mappings and the cleaned DataFrame, by default False.
+            If True, displays summary of value mappings and the cleaned DataFrame, 
+            by default False.
 
         Returns
         -------
@@ -712,13 +800,23 @@ class DataCleaner:
                     continue
 
                 before = df_copy[col].copy()
-                df_copy[col] = df_copy[col].map(mapping).fillna(df_copy[col])
-                changes = (before != df_copy[col]).sum()
+                target_col = new_col if new_col else col
 
+                # Apply mapping
+                df_copy[target_col] = df_copy[col].map(mapping)
+
+                # If default provided → fill all unmapped with default
+                if default is not None:
+                    df_copy[target_col] = df_copy[target_col].fillna(default)
+                else:
+                    # Else fallback to original values
+                    df_copy[target_col] = df_copy[target_col].fillna(df_copy[col])
+
+                # Count changes
+                changes = (before != df_copy[target_col]).sum()
                 if changes > 0:
-                    # Find unmapped categories (still in original values but not in mapping)
                     unmapped = set(before.unique()) - set(mapping.keys())
-                    changed_summary[col] = {
+                    changed_summary[target_col] = {
                         "changes": changes,
                         "mapping": mapping,
                         "unmapped": sorted(unmapped) if unmapped else []
@@ -732,11 +830,8 @@ class DataCleaner:
         if changed_summary:
             for col, details in changed_summary.items():
                 print(f"   └── Column '{col}': {details['changes']} values updated")
-                # Inline mapping
-                inline_map = ", ".join([f"{old!r} → {new!r}" for old, new in details["mapping"].items()])
+                inline_map = ", ".join([f"{old!r} → {new!r}" for old, new in details['mapping'].items()])
                 print(f"       └── Mapping: {inline_map}")
-
-                # Warn if there are unmapped categories
                 if details["unmapped"]:
                     print(f"       └── ⚠️ Unmapped categories in '{col}': {details['unmapped']}")
 

@@ -3,7 +3,7 @@
 # ===========================================================================================================================================
 
 import re
-import difflib
+import dtale
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -650,3 +650,66 @@ class DataExplorer:
             rprint(f"  |  Reduction: [green]{abs(size_change):.2f} MB ({size_pct:.2f}%)[/green]")
         else:
             rprint("  |  [cyan]No change[/cyan]")
+
+###################################################################################################################################
+###################################################################################################################################
+# 🔍 LAUNCH D-TALE VISUALIZATION
+    @staticmethod
+    def show_dtale(
+        df: pd.DataFrame,
+        port: int = 5000,
+        open_browser: bool = True,
+        max_rows: int = 100,
+        max_columns: int = None,
+        float_format: str = "{:,.2f}",
+        session_name: str = None
+    ):
+        """
+        Launch D-Tale for interactive data exploration with optional formatting.
+
+        Parameters
+        ----------
+        df : pd.DataFrame
+            DataFrame to visualize
+        port : int, optional
+            Port to run D-Tale on
+        open_browser : bool, optional
+            Open the browser automatically
+        max_rows : int, optional
+            Maximum number of rows displayed in D-Tale
+        max_columns : int or None, optional
+            Maximum number of columns displayed
+        float_format : str, optional
+            Formatting for float numbers
+        session_name : str, optional
+            Name for the D-Tale session (useful if multiple sessions)
+
+        Returns
+        -------
+        dtale.DTale
+            The D-Tale object
+        """
+        # Set pandas display options
+        pd.set_option("display.max_rows", max_rows)
+        if max_columns:
+            pd.set_option("display.max_columns", max_columns)
+        pd.set_option("display.width", 150)
+        pd.set_option("display.float_format", float_format.format)
+
+        rprint(f"\n[bold cyan]🔍 Launching D-Tale[/bold cyan] on port {port} with session name: {session_name or 'default'}")
+        rprint(f"   └── DataFrame shape: {df.shape[0]:,} rows × {df.shape[1]:,} columns")
+
+        # Launch D-Tale
+        d = dtale.show(
+            df,
+            port=port,
+            subprocess=True,
+            ignore_duplicate=True,
+            name=session_name
+        )
+
+        if open_browser:
+            d.open_browser()
+
+        rprint(f"   └── [green]D-Tale launched successfully![/green]")
+        return d
